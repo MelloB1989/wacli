@@ -1,0 +1,50 @@
+@font-face {
+  font-family: 'NunitoCustom';
+  src: url('./assets/fonts/nunito-v16-latin-regular.woff2') format('woff2');
+  font-weight: 400 800;
+  font-style: normal;
+}
+
+:root {
+  font-family: 'NunitoCustom', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 500;
+  color: #f8f2ea;
+  background:
+    radial-gradient(circle at top left, rgba(255, 145, 77, 0.16), transparent 22%),
+    radial-gradient(circle at bottom right, rgba(123, 241, 200, 0.12), transparent 24%),
+    #09111a;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --ink: #f8f2ea;
+  --muted: rgba(248, 242, 234, 0.66);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}

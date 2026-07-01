@@ -1,0 +1,16 @@
+[Unit]
+Description=wacli WhatsApp daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/wacli
+Environment=HOME=%h
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/code/wacli/wacli daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

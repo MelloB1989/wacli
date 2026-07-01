@@ -1,0 +1,26 @@
+# Compiled binary
+/wacli
+
+# Build output (wails desktop, etc.)
+/build/
+desktop/build/
+desktop/frontend/dist/
+*.exe
+
+# Local env / WhatsApp state (real state lives in ~/.wacli; never commit any)
+.env
+*.db
+*.db-shm
+*.db-wal
+*.session
+
+# Node deps / frontend build
+node_modules/
+desktop/frontend/node_modules/
+desktop/frontend/dist/
+desktop/frontend/wailsjs/
+
+# Desktop compiled binaries
+desktop/WACLI
+desktop/wacli
+desktop/build/bin/
