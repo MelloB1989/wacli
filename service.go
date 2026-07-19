@@ -46,18 +46,6 @@ type Service struct {
 	historySyncTypes  map[string]int
 }
 
-type MediaDownloader struct {
-	directPath    string
-	mediaKey      []byte
-	fileSHA256    []byte
-	fileEncSHA256 []byte
-}
-
-func (m *MediaDownloader) GetDirectPath() string    { return m.directPath }
-func (m *MediaDownloader) GetMediaKey() []byte      { return m.mediaKey }
-func (m *MediaDownloader) GetFileSHA256() []byte    { return m.fileSHA256 }
-func (m *MediaDownloader) GetFileEncSHA256() []byte { return m.fileEncSHA256 }
-
 func NewService(store *Store) (*Service, error) {
 	log := waLog.Stdout("wacli", "WARN", true)
 	db, err := sql.Open("sqlite3", sessionDBPath+"?_foreign_keys=on&_busy_timeout=5000")
@@ -941,6 +929,19 @@ func mimeTypeFromPath(path string) string {
 	return "application/octet-stream"
 }
 
+func mediaTypeForKind(kind string) (whatsmeow.MediaType, string) {
+	switch kind {
+	case "image", "sticker":
+		return whatsmeow.MediaImage, "image"
+	case "video":
+		return whatsmeow.MediaVideo, "video"
+	case "audio":
+		return whatsmeow.MediaAudio, "audio"
+	default:
+		return whatsmeow.MediaDocument, "document"
+	}
+}
+
 func mediaKindFromPath(path string) (whatsmeow.MediaType, string, string, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
@@ -1412,13 +1413,8 @@ func (s *Service) DownloadMedia(ctx context.Context, messageID, chatJID string) 
 	if directPath == "" {
 		directPath = extractDirectPathFromURL(record.URL)
 	}
-	downloader := &MediaDownloader{
-		directPath:    directPath,
-		mediaKey:      record.MediaKey,
-		fileSHA256:    record.FileSHA256,
-		fileEncSHA256: record.FileEncSHA256,
-	}
-	data, err := s.client.Download(ctx, downloader)
+	mediaType, mmsType := mediaTypeForKind(record.MediaType)
+	data, err := s.client.DownloadMediaWithPath(ctx, directPath, record.FileEncSHA256, record.FileSHA256, record.MediaKey, int(record.FileLength), mediaType, mmsType)
 	if err != nil {
 		return "", err
 	}
