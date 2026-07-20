@@ -42,6 +42,12 @@ type MessageRecord struct {
 	Timestamp     time.Time `json:"timestamp"`
 	IsFromMe      bool      `json:"is_from_me"`
 	MessageType   string    `json:"message_type"`
+	// MentionsMe = this message @-mentions THIS account (the bot). QuotedIsFromMe
+	// = it is a reply/quote to a message THIS account sent. Both let a consumer
+	// (e.g. KARMAX) tell that the bot is being directly addressed — generically,
+	// from the account's own identity, with no hardcoded numbers.
+	MentionsMe     bool `json:"mentions_me,omitempty"`
+	QuotedIsFromMe bool `json:"quoted_is_from_me,omitempty"`
 	MediaType     string    `json:"media_type,omitempty"`
 	MimeType      string    `json:"mime_type,omitempty"`
 	FileName      string    `json:"file_name,omitempty"`

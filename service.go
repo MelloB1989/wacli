@@ -704,7 +704,74 @@ func (s *Service) recordFromEventMessage(evt *events.Message) MessageRecord {
 	} else {
 		record.SenderJID = evt.Info.Sender.String()
 	}
+	s.annotateAddressing(&record, evt.Message)
 	return record
+}
+
+// selfUserParts returns the user-parts of THIS account's identities (phone JID
+// and LID). Group mentions/quotes reference either, so both are checked.
+func (s *Service) selfUserParts() map[string]struct{} {
+	out := map[string]struct{}{}
+	if s.client == nil || s.client.Store == nil {
+		return out
+	}
+	if s.client.Store.ID != nil && s.client.Store.ID.User != "" {
+		out[s.client.Store.ID.User] = struct{}{}
+	}
+	if !s.client.Store.LID.IsEmpty() && s.client.Store.LID.User != "" {
+		out[s.client.Store.LID.User] = struct{}{}
+	}
+	return out
+}
+
+// messageContextInfo returns the ContextInfo of whichever message body carries
+// it (text/media), so quote+mention detection works across message kinds.
+func messageContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case msg.GetExtendedTextMessage() != nil:
+		return msg.GetExtendedTextMessage().GetContextInfo()
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage().GetContextInfo()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetContextInfo()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetContextInfo()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage().GetContextInfo()
+	}
+	return nil
+}
+
+// annotateAddressing sets MentionsMe / QuotedIsFromMe by comparing the message's
+// mentioned JIDs and quoted-message sender against THIS account's own identities
+// — fully generic, no configured numbers.
+func (s *Service) annotateAddressing(record *MessageRecord, msg *waE2E.Message) {
+	if msg == nil {
+		return
+	}
+	ctx := messageContextInfo(msg)
+	if ctx == nil {
+		return
+	}
+	self := s.selfUserParts()
+	if len(self) == 0 {
+		return
+	}
+	if p := ctx.GetParticipant(); p != "" {
+		if jid, err := types.ParseJID(p); err == nil {
+			if _, ok := self[jid.User]; ok {
+				record.QuotedIsFromMe = true
+			}
+		}
+	}
+	for _, m := range ctx.GetMentionedJID() {
+		if jid, err := types.ParseJID(m); err == nil {
+			if _, ok := self[jid.User]; ok {
+				record.MentionsMe = true
+				break
+			}
+		}
+	}
 }
 
 func (s *Service) recordFromWebMessage(chatJID string, msg *waWeb.WebMessageInfo) MessageRecord {
