@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"wacli/internal/daemonclient"
+	"github.com/MelloB1989/wacli/internal/daemonclient"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

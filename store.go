@@ -35,29 +35,29 @@ type ChatRecord struct {
 }
 
 type MessageRecord struct {
-	ID            string    `json:"id"`
-	ChatJID       string    `json:"chat_jid"`
-	SenderJID     string    `json:"sender_jid"`
-	Content       string    `json:"content"`
-	Timestamp     time.Time `json:"timestamp"`
-	IsFromMe      bool      `json:"is_from_me"`
-	MessageType   string    `json:"message_type"`
+	ID          string    `json:"id"`
+	ChatJID     string    `json:"chat_jid"`
+	SenderJID   string    `json:"sender_jid"`
+	Content     string    `json:"content"`
+	Timestamp   time.Time `json:"timestamp"`
+	IsFromMe    bool      `json:"is_from_me"`
+	MessageType string    `json:"message_type"`
 	// MentionsMe = this message @-mentions THIS account (the bot). QuotedIsFromMe
 	// = it is a reply/quote to a message THIS account sent. Both let a consumer
 	// (e.g. KARMAX) tell that the bot is being directly addressed — generically,
 	// from the account's own identity, with no hardcoded numbers.
-	MentionsMe     bool `json:"mentions_me,omitempty"`
-	QuotedIsFromMe bool `json:"quoted_is_from_me,omitempty"`
-	MediaType     string    `json:"media_type,omitempty"`
-	MimeType      string    `json:"mime_type,omitempty"`
-	FileName      string    `json:"file_name,omitempty"`
-	MediaPath     string    `json:"media_path,omitempty"`
-	URL           string    `json:"url,omitempty"`
-	DirectPath    string    `json:"direct_path,omitempty"`
-	FileLength    uint64    `json:"file_length,omitempty"`
-	MediaKey      []byte    `json:"-"`
-	FileSHA256    []byte    `json:"-"`
-	FileEncSHA256 []byte    `json:"-"`
+	MentionsMe     bool   `json:"mentions_me,omitempty"`
+	QuotedIsFromMe bool   `json:"quoted_is_from_me,omitempty"`
+	MediaType      string `json:"media_type,omitempty"`
+	MimeType       string `json:"mime_type,omitempty"`
+	FileName       string `json:"file_name,omitempty"`
+	MediaPath      string `json:"media_path,omitempty"`
+	URL            string `json:"url,omitempty"`
+	DirectPath     string `json:"direct_path,omitempty"`
+	FileLength     uint64 `json:"file_length,omitempty"`
+	MediaKey       []byte `json:"-"`
+	FileSHA256     []byte `json:"-"`
+	FileEncSHA256  []byte `json:"-"`
 }
 
 type ContactRecord struct {
@@ -691,7 +691,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	if record.Name == "" || record.Name == record.JID {
 		record.Name = name
 	} else if name != "" && record.Name != name && !isNumericName(record.Name) {
-		record.Name = record.Name
+		// Keep the existing human name; a new numeric/alt name doesn't override it.
 	} else if name != "" {
 		record.Name = name
 	}

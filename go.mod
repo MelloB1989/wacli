@@ -1,4 +1,4 @@
-module wacli
+module github.com/MelloB1989/wacli
 
 go 1.25.6
 

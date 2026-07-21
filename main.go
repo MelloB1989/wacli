@@ -23,11 +23,17 @@ import (
 	"go.mau.fi/whatsmeow"
 )
 
+// version is set at build time via -ldflags "-X main.version=<tag>".
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
 	switch os.Args[1] {
+	case "version", "--version", "-v":
+		fmt.Println("wacli", version)
+		return
 	case "login":
 		cmdLogin(os.Args[2:])
 	case "daemon":
@@ -908,7 +914,7 @@ func callLocalAPIWithTimeout(method, path string, body any, out any, timeout tim
 		var payload map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
 			if msg, ok := payload["error"].(string); ok {
-				return fmt.Errorf(msg)
+				return errors.New(msg)
 			}
 		}
 		return fmt.Errorf("request failed with status %d", resp.StatusCode)
