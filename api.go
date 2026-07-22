@@ -266,6 +266,7 @@ func newHTTPHandler(service *Service) http.Handler {
 			Text      string `json:"text,omitempty"`
 			Message   string `json:"message,omitempty"`
 			MediaPath string `json:"media_path,omitempty"`
+			ReplyTo   string `json:"reply_to,omitempty"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -282,7 +283,7 @@ func newHTTPHandler(service *Service) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
-		record, err := service.SendMessage(ctx, resolved.JID, text, body.MediaPath)
+		record, err := service.SendMessageReplying(ctx, resolved.JID, text, body.MediaPath, body.ReplyTo)
 		if err != nil {
 			writeError(w, automationStatus(err), err)
 			return

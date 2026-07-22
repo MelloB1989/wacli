@@ -848,9 +848,10 @@ func cmdSend(args []string) {
 	to := fs.String("to", "", "recipient JID or phone number")
 	text := fs.String("text", "", "message text")
 	mediaPath := fs.String("media", "", "optional local media path")
+	replyTo := fs.String("reply-to", "", "message ID in the same chat to reply to (quotes it)")
 	_ = fs.Parse(args)
 	if *to == "" {
-		die("usage: wacli send --to <jid|phone> [--text <text>] [--media <path>]")
+		die("usage: wacli send --to <jid|phone> [--text <text>] [--media <path>] [--reply-to <message-id>]")
 	}
 	if *text == "" && fs.NArg() > 0 {
 		*text = strings.Join(fs.Args(), " ")
@@ -861,6 +862,7 @@ func cmdSend(args []string) {
 		"to":         *to,
 		"text":       *text,
 		"media_path": *mediaPath,
+		"reply_to":   *replyTo,
 	}, &response); err != nil {
 		die("send: %v", err)
 	}

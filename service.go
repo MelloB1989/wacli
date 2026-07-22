@@ -693,7 +693,7 @@ func (s *Service) maybeSendAutoReply(chat ChatRecord, incoming MessageRecord) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		record, err := s.sendMessageDirect(ctx, mustParseJID(chat.JID), rule.ReplyText, rule.MediaPath, false)
+		record, err := s.sendMessageDirect(ctx, mustParseJID(chat.JID), rule.ReplyText, rule.MediaPath, false, "")
 		cancel()
 		if err != nil {
 			s.log.Warnf("send auto reply to %s: %v", chat.JID, err)
@@ -1107,6 +1107,46 @@ func mediaKindFromPath(path string) (whatsmeow.MediaType, string, string, error)
 	}
 }
 
+// attachQuotedReply turns an outgoing message into a reply that quotes
+// replyToID. WhatsApp can only carry quote context on an ExtendedTextMessage
+// (or a media message), so a plain Conversation is upgraded in place.
+func (s *Service) attachQuotedReply(msg *waE2E.Message, chatJID types.JID, replyToID string) error {
+	quoted, err := s.store.GetMessage(replyToID, chatJID.String())
+	if err != nil {
+		return fmt.Errorf("quoted message not found: %w", err)
+	}
+	participant := strings.TrimSpace(quoted.SenderJID)
+	if participant == "" {
+		participant = chatJID.String()
+	}
+	info := &waE2E.ContextInfo{
+		StanzaID:      proto.String(replyToID),
+		Participant:   proto.String(participant),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(quoted.Content)},
+	}
+	switch {
+	case msg.Conversation != nil:
+		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+			Text:        proto.String(msg.GetConversation()),
+			ContextInfo: info,
+		}
+		msg.Conversation = nil
+	case msg.ExtendedTextMessage != nil:
+		msg.ExtendedTextMessage.ContextInfo = info
+	case msg.ImageMessage != nil:
+		msg.ImageMessage.ContextInfo = info
+	case msg.VideoMessage != nil:
+		msg.VideoMessage.ContextInfo = info
+	case msg.DocumentMessage != nil:
+		msg.DocumentMessage.ContextInfo = info
+	case msg.AudioMessage != nil:
+		msg.AudioMessage.ContextInfo = info
+	default:
+		return errors.New("message kind cannot carry a quote")
+	}
+	return nil
+}
+
 func (s *Service) buildOutgoingMessage(ctx context.Context, text, mediaPath string) (*waE2E.Message, string, string, error) {
 	text = strings.TrimSpace(text)
 	if mediaPath == "" {
@@ -1208,6 +1248,13 @@ func (s *Service) ResolveBestTarget(ref, kind string, allowDirect bool) (Resolve
 }
 
 func (s *Service) SendMessage(ctx context.Context, recipient, text, mediaPath string) (MessageRecord, error) {
+	return s.SendMessageReplying(ctx, recipient, text, mediaPath, "")
+}
+
+// SendMessageReplying sends a message that, when replyToID is a message ID in
+// the same chat, is delivered as a WhatsApp REPLY quoting that message — so the
+// recipient sees which message it answers.
+func (s *Service) SendMessageReplying(ctx context.Context, recipient, text, mediaPath, replyToID string) (MessageRecord, error) {
 	target, err := s.ResolveBestTarget(recipient, "chat", true)
 	if err != nil {
 		return MessageRecord{}, err
@@ -1219,16 +1266,22 @@ func (s *Service) SendMessage(ctx context.Context, recipient, text, mediaPath st
 	if err := s.ensureAutomationAllowed(jid); err != nil {
 		return MessageRecord{}, err
 	}
-	return s.sendMessageDirect(ctx, jid, text, mediaPath, true)
+	return s.sendMessageDirect(ctx, jid, text, mediaPath, true, replyToID)
 }
 
-func (s *Service) sendMessageDirect(ctx context.Context, jid types.JID, text, mediaPath string, emitWebhook bool) (MessageRecord, error) {
+func (s *Service) sendMessageDirect(ctx context.Context, jid types.JID, text, mediaPath string, emitWebhook bool, replyToID string) (MessageRecord, error) {
 	if !s.client.IsConnected() {
 		return MessageRecord{}, errors.New("WhatsApp client is not connected")
 	}
 	msg, messageType, _, err := s.buildOutgoingMessage(ctx, text, mediaPath)
 	if err != nil {
 		return MessageRecord{}, err
+	}
+	if strings.TrimSpace(replyToID) != "" {
+		if err := s.attachQuotedReply(msg, jid, strings.TrimSpace(replyToID)); err != nil {
+			// A missing/unknown quote target shouldn't block the message.
+			s.log.Warnf("reply-to %s: %v (sending unquoted)", replyToID, err)
+		}
 	}
 	resp, err := s.client.SendMessage(ctx, jid, msg)
 	if err != nil {
