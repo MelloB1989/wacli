@@ -846,7 +846,9 @@ func (s *Service) annotateAddressing(record *MessageRecord, msg *waE2E.Message) 
 			}
 		}
 	}
-	for _, m := range ctx.GetMentionedJID() {
+	mentioned := ctx.GetMentionedJID()
+	record.MentionCount = len(mentioned)
+	for _, m := range mentioned {
 		if jid, err := types.ParseJID(m); err == nil {
 			if _, ok := self[jid.User]; ok {
 				record.MentionsMe = true
@@ -1681,15 +1683,22 @@ func webhookWantsEvent(webhook WebhookRecord, event string) bool {
 }
 
 func webhookMatchesPayload(webhook WebhookRecord, payload map[string]any) bool {
+	message, hasMessage := webhookPayloadMessage(payload)
 	if chat, ok := webhookPayloadChat(payload); ok {
 		if chat.Locked {
 			return false
 		}
 		if webhook.Scope == "selected_chats" && !stringInList(chat.JID, webhook.ChatJIDs) {
-			return false
+			// Out of scope. Still deliver if this webhook opted into mention
+			// delivery and the account was @-mentioned — being summoned should
+			// reach the consumer from anywhere. What to do with it (e.g. ignore
+			// "@all" blasts) is the consumer's policy, not ours.
+			if !(webhook.IncludeMentions && hasMessage && message.MentionsMe) {
+				return false
+			}
 		}
 	}
-	if message, ok := webhookPayloadMessage(payload); ok {
+	if hasMessage {
 		return webhookWantsMessageType(webhook, message)
 	}
 	return true

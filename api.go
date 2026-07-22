@@ -483,16 +483,17 @@ func newHTTPHandler(service *Service) http.Handler {
 			writeJSON(w, http.StatusOK, map[string]any{"webhooks": webhooks})
 		case http.MethodPost:
 			var body struct {
-				URL          string   `json:"url"`
-				Secret       string   `json:"secret,omitempty"`
-				Events       []string `json:"events,omitempty"`
-				Scope        string   `json:"scope,omitempty"`
-				ChatRef      string   `json:"chat_ref,omitempty"`
-				ChatRefs     []string `json:"chat_refs,omitempty"`
-				ChatJIDs     []string `json:"chat_jids,omitempty"`
-				MessageTypes []string `json:"message_types,omitempty"`
-				ContextLimit int      `json:"context_limit,omitempty"`
-				Enabled      *bool    `json:"enabled,omitempty"`
+				URL             string   `json:"url"`
+				Secret          string   `json:"secret,omitempty"`
+				Events          []string `json:"events,omitempty"`
+				Scope           string   `json:"scope,omitempty"`
+				ChatRef         string   `json:"chat_ref,omitempty"`
+				ChatRefs        []string `json:"chat_refs,omitempty"`
+				ChatJIDs        []string `json:"chat_jids,omitempty"`
+				MessageTypes    []string `json:"message_types,omitempty"`
+				ContextLimit    int      `json:"context_limit,omitempty"`
+				Enabled         *bool    `json:"enabled,omitempty"`
+				IncludeMentions bool     `json:"include_mentions,omitempty"`
 			}
 			if err := decodeJSON(r, &body); err != nil {
 				writeError(w, http.StatusBadRequest, err)
@@ -513,14 +514,15 @@ func newHTTPHandler(service *Service) http.Handler {
 				return
 			}
 			record, err := service.store.AddWebhook(WebhookRecord{
-				URL:          body.URL,
-				Secret:       body.Secret,
-				Events:       body.Events,
-				Scope:        body.Scope,
-				ChatJIDs:     resolvedChatJIDs,
-				MessageTypes: body.MessageTypes,
-				ContextLimit: body.ContextLimit,
-				Enabled:      enabled,
+				URL:             body.URL,
+				Secret:          body.Secret,
+				Events:          body.Events,
+				Scope:           body.Scope,
+				ChatJIDs:        resolvedChatJIDs,
+				MessageTypes:    body.MessageTypes,
+				ContextLimit:    body.ContextLimit,
+				Enabled:         enabled,
+				IncludeMentions: body.IncludeMentions,
 			})
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err)

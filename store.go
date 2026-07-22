@@ -46,18 +46,23 @@ type MessageRecord struct {
 	// = it is a reply/quote to a message THIS account sent. Both let a consumer
 	// (e.g. KARMAX) tell that the bot is being directly addressed — generically,
 	// from the account's own identity, with no hardcoded numbers.
-	MentionsMe     bool   `json:"mentions_me,omitempty"`
-	QuotedIsFromMe bool   `json:"quoted_is_from_me,omitempty"`
-	MediaType      string `json:"media_type,omitempty"`
-	MimeType       string `json:"mime_type,omitempty"`
-	FileName       string `json:"file_name,omitempty"`
-	MediaPath      string `json:"media_path,omitempty"`
-	URL            string `json:"url,omitempty"`
-	DirectPath     string `json:"direct_path,omitempty"`
-	FileLength     uint64 `json:"file_length,omitempty"`
-	MediaKey       []byte `json:"-"`
-	FileSHA256     []byte `json:"-"`
-	FileEncSHA256  []byte `json:"-"`
+	MentionsMe     bool `json:"mentions_me,omitempty"`
+	QuotedIsFromMe bool `json:"quoted_is_from_me,omitempty"`
+	// MentionCount is how many JIDs this message @-mentioned in total, so a
+	// consumer can tell a direct mention from an "@all"-style mass mention.
+	// wacli deliberately doesn't judge that itself — that policy lives in the
+	// consumer (e.g. the KARMAX wa-monitor loop).
+	MentionCount  int    `json:"mention_count,omitempty"`
+	MediaType     string `json:"media_type,omitempty"`
+	MimeType      string `json:"mime_type,omitempty"`
+	FileName      string `json:"file_name,omitempty"`
+	MediaPath     string `json:"media_path,omitempty"`
+	URL           string `json:"url,omitempty"`
+	DirectPath    string `json:"direct_path,omitempty"`
+	FileLength    uint64 `json:"file_length,omitempty"`
+	MediaKey      []byte `json:"-"`
+	FileSHA256    []byte `json:"-"`
+	FileEncSHA256 []byte `json:"-"`
 }
 
 type ContactRecord struct {
@@ -83,17 +88,22 @@ type ContactUpdate struct {
 }
 
 type WebhookRecord struct {
-	ID           int64     `json:"id"`
-	URL          string    `json:"url"`
-	Secret       string    `json:"secret,omitempty"`
-	Events       []string  `json:"events"`
-	Scope        string    `json:"scope"`
-	ChatJIDs     []string  `json:"chat_jids,omitempty"`
-	MessageTypes []string  `json:"message_types,omitempty"`
-	ContextLimit int       `json:"context_limit"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int64    `json:"id"`
+	URL          string   `json:"url"`
+	Secret       string   `json:"secret,omitempty"`
+	Events       []string `json:"events"`
+	Scope        string   `json:"scope"`
+	ChatJIDs     []string `json:"chat_jids,omitempty"`
+	MessageTypes []string `json:"message_types,omitempty"`
+	ContextLimit int      `json:"context_limit"`
+	Enabled      bool     `json:"enabled"`
+	// IncludeMentions delivers messages from chats OUTSIDE this webhook's scope
+	// when they @-mention this account, so a consumer can react to being
+	// summoned anywhere. Pure transport: what to do with those events (e.g.
+	// ignoring "@all" blasts) is the consumer's policy, not wacli's.
+	IncludeMentions bool      `json:"include_mentions"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type OpenClawBridgeRecord struct {
@@ -430,6 +440,7 @@ func (s *Store) ensureWebhookSchema() error {
 		{name: "chat_jids", ddl: "TEXT NOT NULL DEFAULT '[]'"},
 		{name: "message_types", ddl: `TEXT NOT NULL DEFAULT '["*"]'`},
 		{name: "context_limit", ddl: "INTEGER NOT NULL DEFAULT 12"},
+		{name: "include_mentions", ddl: "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, column := range columns {
 		if err := s.ensureTableColumn("webhooks", column.name, column.ddl); err != nil {
@@ -1343,9 +1354,9 @@ func (s *Store) AddWebhook(record WebhookRecord) (WebhookRecord, error) {
 	}
 	now := time.Now()
 	result, err := s.db.Exec(`
-INSERT INTO webhooks (url, secret, events, scope, chat_jids, message_types, context_limit, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, strings.TrimSpace(record.URL), strings.TrimSpace(record.Secret), string(eventJSON), record.Scope, string(chatJIDsJSON), string(messageTypesJSON), record.ContextLimit, boolToInt(record.Enabled), now.Unix(), now.Unix())
+INSERT INTO webhooks (url, secret, events, scope, chat_jids, message_types, context_limit, enabled, include_mentions, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, strings.TrimSpace(record.URL), strings.TrimSpace(record.Secret), string(eventJSON), record.Scope, string(chatJIDsJSON), string(messageTypesJSON), record.ContextLimit, boolToInt(record.Enabled), boolToInt(record.IncludeMentions), now.Unix(), now.Unix())
 	if err != nil {
 		return WebhookRecord{}, err
 	}
@@ -1360,7 +1371,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 }
 
 func (s *Store) ListWebhooks() ([]WebhookRecord, error) {
-	rows, err := s.db.Query(`SELECT id, url, secret, events, scope, chat_jids, message_types, context_limit, enabled, created_at, updated_at FROM webhooks ORDER BY id ASC`)
+	rows, err := s.db.Query(`SELECT id, url, secret, events, scope, chat_jids, message_types, context_limit, enabled, include_mentions, created_at, updated_at FROM webhooks ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1370,12 +1381,13 @@ func (s *Store) ListWebhooks() ([]WebhookRecord, error) {
 	for rows.Next() {
 		var record WebhookRecord
 		var eventsJSON, chatJIDsJSON, messageTypesJSON string
-		var enabled int
+		var enabled, includeMentions int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&record.ID, &record.URL, &record.Secret, &eventsJSON, &record.Scope, &chatJIDsJSON, &messageTypesJSON, &record.ContextLimit, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.URL, &record.Secret, &eventsJSON, &record.Scope, &chatJIDsJSON, &messageTypesJSON, &record.ContextLimit, &enabled, &includeMentions, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		record.Enabled = intToBool(enabled)
+		record.IncludeMentions = intToBool(includeMentions)
 		record.CreatedAt = time.Unix(createdAt, 0)
 		record.UpdatedAt = time.Unix(updatedAt, 0)
 		if err := json.Unmarshal([]byte(eventsJSON), &record.Events); err != nil {

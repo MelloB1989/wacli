@@ -364,6 +364,7 @@ func cmdWebhooksAdd(args []string) {
 	messageTypes := fs.String("message-types", "*", "comma-separated message kinds: text,image,video,document,audio,sticker,media,*")
 	contextLimit := fs.Int("context-limit", 12, "recent message context window size")
 	disabled := fs.Bool("disabled", false, "create disabled webhook")
+	includeMentions := fs.Bool("include-mentions", false, "also deliver messages from chats outside the scope when this account is @-mentioned")
 	var chats stringListFlag
 	fs.Var(&chats, "chat", "chat reference to subscribe; repeat for multiple chats")
 	_ = fs.Parse(args)
@@ -382,14 +383,15 @@ func cmdWebhooksAdd(args []string) {
 
 	var response map[string]any
 	if err := callLocalAPI(http.MethodPost, "/webhooks", map[string]any{
-		"url":           strings.TrimSpace(*urlValue),
-		"secret":        strings.TrimSpace(*secret),
-		"events":        splitCSV(*events),
-		"scope":         webhookScope,
-		"chat_refs":     []string(chats),
-		"message_types": splitCSV(*messageTypes),
-		"context_limit": *contextLimit,
-		"enabled":       !*disabled,
+		"url":              strings.TrimSpace(*urlValue),
+		"secret":           strings.TrimSpace(*secret),
+		"events":           splitCSV(*events),
+		"scope":            webhookScope,
+		"chat_refs":        []string(chats),
+		"message_types":    splitCSV(*messageTypes),
+		"context_limit":    *contextLimit,
+		"enabled":          !*disabled,
+		"include_mentions": *includeMentions,
 	}, &response); err != nil {
 		die("webhooks add: %v", err)
 	}
