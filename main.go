@@ -596,6 +596,9 @@ func cmdDaemon() {
 	if err := service.Connect(); err != nil {
 		die("%v", err)
 	}
+	// Guard the long-running connection: recover from a socket that dies
+	// silently while still reporting "connected" (messages stop arriving).
+	service.StartConnectionWatchdog()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -44,6 +44,13 @@ type Service struct {
 	historyEventCount int
 	lastHistoryEvent  time.Time
 	historySyncTypes  map[string]int
+
+	// lastEventAt is the wall-clock time of the most recent event received from
+	// WhatsApp (any kind). The connection watchdog uses it to detect a "zombie"
+	// socket — one that still reports connected but has silently stopped
+	// delivering messages — and force a reconnect.
+	lastEventAt  time.Time
+	watchdogOnce sync.Once
 }
 
 func NewService(store *Store) (*Service, error) {
@@ -104,6 +111,9 @@ func clearSession() {
 
 func (s *Service) registerEventHandlers() {
 	s.client.AddEventHandler(func(evt any) {
+		// Any event from WhatsApp proves the socket is alive — feed the watchdog.
+		s.noteEvent()
+
 		switch v := evt.(type) {
 		case *events.Connected:
 			s.onConnected()
@@ -117,7 +127,79 @@ func (s *Service) registerEventHandlers() {
 			s.onHistorySync(v)
 		case *events.Receipt:
 			s.onReceipt(v)
+		case *events.KeepAliveTimeout:
+			// Keepalive pings are failing: the connection is dead even though the
+			// socket may still look open. Force a reconnect rather than sitting
+			// there silently dropping every incoming message.
+			s.log.Warnf("keepalive timeout — forcing reconnect")
+			go s.forceReconnect("keepalive timeout")
+		case *events.KeepAliveRestored:
+			s.log.Infof("keepalive restored")
 		}
+	})
+}
+
+// noteEvent records that WhatsApp delivered something just now.
+func (s *Service) noteEvent() {
+	s.mu.Lock()
+	s.lastEventAt = time.Now()
+	s.mu.Unlock()
+}
+
+func (s *Service) sinceLastEvent() time.Duration {
+	s.mu.RLock()
+	last := s.lastEventAt
+	s.mu.RUnlock()
+	if last.IsZero() {
+		return 0
+	}
+	return time.Since(last)
+}
+
+// forceReconnect tears the WhatsApp connection down and dials again. Safe to
+// call repeatedly; whatsmeow tolerates a disconnect on an already-dead socket.
+func (s *Service) forceReconnect(reason string) {
+	s.log.Warnf("reconnecting to WhatsApp (%s)", reason)
+	if s.client != nil {
+		s.client.Disconnect()
+	}
+	time.Sleep(2 * time.Second)
+	if err := s.Connect(); err != nil {
+		s.log.Errorf("reconnect failed: %v", err)
+		return
+	}
+	s.noteEvent() // give the fresh connection a grace period
+}
+
+// StartConnectionWatchdog guards against the failure mode where the WhatsApp
+// socket stops delivering messages while still reporting "connected" — the
+// daemon looks healthy but silently receives nothing. It reconnects when the
+// client reports disconnected, or when nothing at all has arrived for
+// watchdogStaleAfter (receipts/presence make a truly silent window unusual on
+// an active account). Idempotent: only the first call starts the loop.
+func (s *Service) StartConnectionWatchdog() {
+	const (
+		watchdogInterval   = 2 * time.Minute
+		watchdogStaleAfter = 20 * time.Minute
+	)
+	s.watchdogOnce.Do(func() {
+		s.noteEvent()
+		go func() {
+			ticker := time.NewTicker(watchdogInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if s.client == nil || s.client.Store.ID == nil {
+					continue // not logged in; nothing to guard
+				}
+				if !s.client.IsConnected() {
+					s.forceReconnect("client reports disconnected")
+					continue
+				}
+				if idle := s.sinceLastEvent(); idle > watchdogStaleAfter {
+					s.forceReconnect(fmt.Sprintf("no WhatsApp events for %s", idle.Round(time.Minute)))
+				}
+			}
+		}()
 	})
 }
 
