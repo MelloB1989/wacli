@@ -1157,6 +1157,41 @@ func scanMessage(scanner interface {
 	return record, nil
 }
 
+// JIDForNumber finds the real JID for a bare number (e.g. "150285251002514")
+// from known history/contacts — crucial for mentions, since a number can belong
+// to an "@lid" identity and defaulting it to "@s.whatsapp.net" makes WhatsApp
+// fail to render the mention. Prefers a JID seen in a specific chat, then any
+// message sender, then a contact. Returns "" if the number is unknown.
+func (s *Store) JIDForNumber(number, preferChatJID string) string {
+	number = strings.TrimSpace(number)
+	if number == "" {
+		return ""
+	}
+	like := number + "@%"
+	// 1) A sender in the target chat — the most reliable for a group mention.
+	if strings.TrimSpace(preferChatJID) != "" {
+		var jid string
+		if err := s.db.QueryRow(
+			`SELECT sender_jid FROM messages WHERE chat_jid = ? AND sender_jid LIKE ? ORDER BY timestamp DESC LIMIT 1`,
+			preferChatJID, like).Scan(&jid); err == nil && jid != "" {
+			return jid
+		}
+	}
+	// 2) Any message sender anywhere.
+	var jid string
+	if err := s.db.QueryRow(
+		`SELECT sender_jid FROM messages WHERE sender_jid LIKE ? ORDER BY timestamp DESC LIMIT 1`,
+		like).Scan(&jid); err == nil && jid != "" {
+		return jid
+	}
+	// 3) A known chat/contact JID.
+	if err := s.db.QueryRow(
+		`SELECT jid FROM chats WHERE jid LIKE ? LIMIT 1`, like).Scan(&jid); err == nil && jid != "" {
+		return jid
+	}
+	return ""
+}
+
 func (s *Store) GetMessage(messageID, chatJID string) (MessageRecord, error) {
 	row := s.db.QueryRow(`
 SELECT id, chat_jid, sender_jid, content, timestamp, is_from_me, message_type,

@@ -1107,6 +1107,72 @@ func mediaKindFromPath(path string) (whatsmeow.MediaType, string, string, error)
 	}
 }
 
+// mentionPattern matches "@<6+ digits>" — how a mention is written in text.
+var mentionPattern = regexp.MustCompile(`@(\d{6,})`)
+
+// attachMentions scans the outgoing text for "@<number>" tokens, resolves each
+// to a real JID, and records them in the message's ContextInfo.MentionedJID so
+// WhatsApp renders them as proper @Name mentions instead of raw numbers. Any
+// number that can't be resolved is left as-is (plain text, no worse than
+// before). A plain Conversation is upgraded to an ExtendedTextMessage in place,
+// since only that (or a media message) can carry mention context.
+func (s *Service) attachMentions(msg *waE2E.Message, text, chatJID string) {
+	matches := mentionPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return
+	}
+	seen := map[string]bool{}
+	var jids []string
+	for _, m := range matches {
+		number := m[1]
+		// Prefer the REAL JID from history (gets @lid vs @s.whatsapp.net right);
+		// fall back to the resolver only if the number is otherwise unknown.
+		jid := s.store.JIDForNumber(number, chatJID)
+		if jid == "" {
+			if target, err := s.ResolveBestTarget(number, "chat", true); err == nil && target.JID != "" && !target.IsGroup {
+				jid = target.JID
+			}
+		}
+		if jid == "" || seen[jid] {
+			continue
+		}
+		seen[jid] = true
+		jids = append(jids, jid)
+	}
+	if len(jids) == 0 {
+		return
+	}
+	setMentionedJIDs(msg, jids)
+}
+
+// setMentionedJIDs attaches the mentioned JIDs to whichever message body can
+// carry ContextInfo, creating/merging ContextInfo as needed.
+func setMentionedJIDs(msg *waE2E.Message, jids []string) {
+	ensure := func(ci *waE2E.ContextInfo) *waE2E.ContextInfo {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
+		}
+		ci.MentionedJID = append(ci.MentionedJID, jids...)
+		return ci
+	}
+	switch {
+	case msg.Conversation != nil:
+		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+			Text:        proto.String(msg.GetConversation()),
+			ContextInfo: ensure(nil),
+		}
+		msg.Conversation = nil
+	case msg.ExtendedTextMessage != nil:
+		msg.ExtendedTextMessage.ContextInfo = ensure(msg.ExtendedTextMessage.GetContextInfo())
+	case msg.ImageMessage != nil:
+		msg.ImageMessage.ContextInfo = ensure(msg.ImageMessage.GetContextInfo())
+	case msg.VideoMessage != nil:
+		msg.VideoMessage.ContextInfo = ensure(msg.VideoMessage.GetContextInfo())
+	case msg.DocumentMessage != nil:
+		msg.DocumentMessage.ContextInfo = ensure(msg.DocumentMessage.GetContextInfo())
+	}
+}
+
 // attachQuotedReply turns an outgoing message into a reply that quotes
 // replyToID. WhatsApp can only carry quote context on an ExtendedTextMessage
 // (or a media message), so a plain Conversation is upgraded in place.
@@ -1283,6 +1349,9 @@ func (s *Service) sendMessageDirect(ctx context.Context, jid types.JID, text, me
 			s.log.Warnf("reply-to %s: %v (sending unquoted)", replyToID, err)
 		}
 	}
+	// Turn "@<number>" tokens in the text into real WhatsApp mentions, so they
+	// render as the contact's name instead of a raw number.
+	s.attachMentions(msg, text, jid.String())
 	resp, err := s.client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return MessageRecord{}, err
