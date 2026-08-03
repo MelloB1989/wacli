@@ -1107,6 +1107,19 @@ func mediaKindFromPath(path string) (whatsmeow.MediaType, string, string, error)
 	}
 }
 
+// digitsOnly strips a JID down to its numeric user part ("9199…@lid" -> "9199…").
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == '@' || r == ':' {
+			break
+		}
+	}
+	return b.String()
+}
+
 // mentionPattern matches "@<6+ digits>" — how a mention is written in text.
 var mentionPattern = regexp.MustCompile(`@(\d{6,})`)
 
@@ -1325,7 +1338,18 @@ func (s *Service) SendMessageReplying(ctx context.Context, recipient, text, medi
 	if err != nil {
 		return MessageRecord{}, err
 	}
-	jid, err := types.ParseJID(target.JID)
+	// A bare phone number resolves to "<digits>@s.whatsapp.net" by default, but
+	// many contacts only exist under an "@lid" identity — sending to the wrong
+	// server fails with "no LID found for ...". If the resolved target isn't a
+	// chat/contact we actually know, prefer the real JID seen in history.
+	resolved := target.JID
+	if !target.ExistsInChats && !target.ExistsInContacts {
+		if real := s.store.JIDForNumber(digitsOnly(resolved), ""); real != "" && real != resolved {
+			s.log.Infof("send: %s is not a known chat; using %s from history", resolved, real)
+			resolved = real
+		}
+	}
+	jid, err := types.ParseJID(resolved)
 	if err != nil {
 		return MessageRecord{}, err
 	}
