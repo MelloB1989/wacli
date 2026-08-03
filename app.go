@@ -20,11 +20,17 @@ var (
 const defaultHTTPAddr = "127.0.0.1:8765"
 
 func init() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		die("cannot determine home directory: %v", err)
+	// WACLI_HOME lets several independent wacli instances share one OS user,
+	// each with its own WhatsApp session, database and media. Pair it with
+	// WACLI_HTTP_ADDR so each daemon binds its own port. Defaults to ~/.wacli.
+	dataDir = strings.TrimSpace(os.Getenv("WACLI_HOME"))
+	if dataDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			die("cannot determine home directory: %v", err)
+		}
+		dataDir = filepath.Join(home, ".wacli")
 	}
-	dataDir = filepath.Join(home, ".wacli")
 	mediaDir = filepath.Join(dataDir, "media")
 	sessionDBPath = filepath.Join(dataDir, "session.db")
 	appDBPath = filepath.Join(dataDir, "state.db")
