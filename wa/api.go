@@ -1,4 +1,4 @@
-package main
+package wa
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func newHTTPHandler(service *Service) http.Handler {
+func NewHTTPHandler(service *Service) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func newHTTPHandler(service *Service) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		marker := service.historyMarker()
+		marker := service.HistoryMarker()
 		requested := true
 		if err := service.RequestHistorySync(ctx, 100); err != nil {
 			if !errors.Is(err, ErrHistoryAnchorUnavailable) {
@@ -103,7 +103,7 @@ func newHTTPHandler(service *Service) http.Handler {
 			}
 			requested = false
 		}
-		seen := service.waitForHistoryQuiet(marker, 30*time.Second, 4*time.Second)
+		seen := service.WaitForHistoryQuiet(marker, 30*time.Second, 4*time.Second)
 		_ = service.SyncContacts(ctx)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":                true,
@@ -499,7 +499,7 @@ func newHTTPHandler(service *Service) http.Handler {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": body.Enabled, "path": capturePath})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": body.Enabled, "path": CapturePath})
 	})
 
 	mux.HandleFunc("/calls/end", func(w http.ResponseWriter, r *http.Request) {

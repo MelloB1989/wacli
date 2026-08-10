@@ -1,4 +1,4 @@
-package main
+package wa
 
 import (
 	"context"
@@ -79,7 +79,7 @@ func NewService(store *Store) (*Service, error) {
 	baseLog := waLog.Stdout("wacli", level, true)
 	// Wrap the logger so call stanzas can be tapped for protocol analysis. Capture stays off until
 	// something calls StartCallCapture, so this costs one type switch per logged stanza.
-	capture := newCallCapture(capturePath)
+	capture := newCallCapture(CapturePath)
 	// Relay tokens are relay-scoped — a relay rejects a token minted for a different one with
 	// code 456 "Failed to decode allocate request". Yet the real client reaches relays the call
 	// offer never names, so it must obtain those tokens somewhere else. Capture normally starts
@@ -90,7 +90,7 @@ func NewService(store *Store) (*Service, error) {
 		_ = capture.Enable()
 	}
 	log := newCaptureLogger(baseLog, capture)
-	db, err := sql.Open("sqlite3", sessionDBPath+"?_foreign_keys=on&_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", SessionDBPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open session db: %w", err)
 	}
@@ -159,9 +159,9 @@ func (s *Service) Close() error {
 	return nil
 }
 
-func clearSession() {
+func ClearSession() {
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
-		_ = os.Remove(sessionDBPath + suffix)
+		_ = os.Remove(SessionDBPath + suffix)
 	}
 }
 
@@ -302,13 +302,13 @@ func (s *Service) CurrentUserLID() string {
 	return s.client.Store.LID.String()
 }
 
-func (s *Service) historyMarker() int {
+func (s *Service) HistoryMarker() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.historyEventCount
 }
 
-func (s *Service) waitForHistoryQuiet(marker int, maxWait, quietPeriod time.Duration) bool {
+func (s *Service) WaitForHistoryQuiet(marker int, maxWait, quietPeriod time.Duration) bool {
 	deadline := time.Now().Add(maxWait)
 	for {
 		s.mu.RLock()
@@ -325,7 +325,7 @@ func (s *Service) waitForHistoryQuiet(marker int, maxWait, quietPeriod time.Dura
 	}
 }
 
-func (s *Service) waitForBootstrapSync(maxWait, quietPeriod time.Duration) bool {
+func (s *Service) WaitForBootstrapSync(maxWait, quietPeriod time.Duration) bool {
 	deadline := time.Now().Add(maxWait)
 	for {
 		s.mu.RLock()
@@ -408,7 +408,7 @@ func (s *Service) SyncContacts(ctx context.Context) error {
 	for jid, contact := range contacts {
 		record := ContactRecord{
 			JID:          jid.String(),
-			Phone:        normalizePhone(jid.User),
+			Phone:        NormalizePhone(jid.User),
 			FullName:     contact.FullName,
 			FirstName:    contact.FirstName,
 			PushName:     contact.PushName,
@@ -486,7 +486,7 @@ func (s *Service) onLoggedOut() {
 	s.connected = false
 	s.mu.Unlock()
 	fmt.Println("logged out; run `wacli login` again")
-	clearSession()
+	ClearSession()
 	_ = s.store.AddAppLog("error", "connection", "WhatsApp session logged out", map[string]any{
 		"user_jid": s.CurrentUserJID(),
 	})
@@ -819,7 +819,7 @@ func (s *Service) ensureContactFromMessage(record MessageRecord, fallbackName st
 	if strings.Contains(phone, "@") {
 		phone = strings.Split(phone, "@")[0]
 	}
-	phone = normalizePhone(phone)
+	phone = NormalizePhone(phone)
 	contact := ContactRecord{
 		JID:       record.SenderJID,
 		Phone:     phone,
@@ -1776,7 +1776,7 @@ func (s *Service) DownloadMedia(ctx context.Context, messageID, chatJID string) 
 	if filename == "" {
 		filename = sanitizeFileName(fmt.Sprintf("%s_%s", record.MediaType, record.ID))
 	}
-	chatDir := filepath.Join(mediaDir, sanitizePathPart(chatJID))
+	chatDir := filepath.Join(MediaDir, sanitizePathPart(chatJID))
 	if err := os.MkdirAll(chatDir, 0o700); err != nil {
 		return "", err
 	}
@@ -2075,3 +2075,10 @@ func truncateString(value string, limit int) string {
 	}
 	return value[:limit]
 }
+
+// Client exposes the underlying whatsmeow client for callers that need to drive login or reach a
+// protocol feature wacli does not wrap.
+func (s *Service) Client() *whatsmeow.Client { return s.client }
+
+// Store exposes the local database: chats, messages, contacts, webhooks, triggers and settings.
+func (s *Service) Store() *Store { return s.store }

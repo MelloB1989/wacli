@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	wa "github.com/MelloB1989/wacli/wa"
 	"io"
 	"net/http"
 	"net/url"
@@ -102,16 +103,16 @@ func absPath(p string) string {
 	return abs
 }
 
-func openStoreOrDie() *Store {
-	store, err := OpenStore(appDBPath)
+func openStoreOrDie() *wa.Store {
+	store, err := wa.OpenStore(wa.AppDBPath)
 	if err != nil {
 		die("open store: %v", err)
 	}
 	return store
 }
 
-func newServiceOrDie(store *Store) *Service {
-	service, err := NewService(store)
+func newServiceOrDie(store *wa.Store) *wa.Service {
+	service, err := wa.NewService(store)
 	if err != nil {
 		die("create service: %v", err)
 	}
@@ -132,7 +133,7 @@ func cmdLogin(args []string) {
 	service := newServiceOrDie(store)
 	defer service.Close()
 
-	if service.client.Store.ID != nil {
+	if service.Client().Store.ID != nil {
 		fmt.Println("Existing session found, verifying...")
 		if err := service.Connect(); err == nil && waitUntilConnected(service, 15*time.Second) {
 			fmt.Println("Session valid.")
@@ -145,16 +146,16 @@ func cmdLogin(args []string) {
 		}
 		fmt.Println("Existing session is stale. Clearing it and starting fresh.")
 		service.Close()
-		clearSession()
+		wa.ClearSession()
 		service = newServiceOrDie(store)
 		defer service.Close()
 	}
 
-	qrChan, err := service.client.GetQRChannel(context.Background())
+	qrChan, err := service.Client().GetQRChannel(context.Background())
 	if err != nil {
 		die("open QR channel: %v", err)
 	}
-	if err := service.client.Connect(); err != nil {
+	if err := service.Client().Connect(); err != nil {
 		die("connect: %v", err)
 	}
 
@@ -166,11 +167,11 @@ func cmdLogin(args []string) {
 				if pairRequested {
 					continue
 				}
-				phone := normalizePhone(os.Getenv("WACLI_PHONE"))
+				phone := wa.NormalizePhone(os.Getenv("WACLI_PHONE"))
 				if phone == "" {
 					die("WACLI_PHONE env var is required for pairing-code login")
 				}
-				code, err := service.client.PairPhone(context.Background(), phone, false, whatsmeow.PairClientChrome, "Chrome (Linux)")
+				code, err := service.Client().PairPhone(context.Background(), phone, false, whatsmeow.PairClientChrome, "Chrome (Linux)")
 				if err != nil {
 					die("pair phone: %v", err)
 				}
@@ -196,27 +197,27 @@ func cmdLogin(args []string) {
 	}
 }
 
-func postLoginSync(service *Service) {
+func postLoginSync(service *wa.Service) {
 	fmt.Println("Syncing chats, messages, and contacts...")
-	statusBefore, _ := service.store.BuildStatus(service.IsConnected(), service.CurrentUserJID())
-	prevSync, _ := service.store.LastHistorySync()
+	statusBefore, _ := service.Store().BuildStatus(service.IsConnected(), service.CurrentUserJID())
+	prevSync, _ := service.Store().LastHistorySync()
 	seen := false
 	if prevSync == nil {
-		seen = service.waitForBootstrapSync(120*time.Second, 6*time.Second)
+		seen = service.WaitForBootstrapSync(120*time.Second, 6*time.Second)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if !seen && statusBefore.MessageCount > 0 {
-		marker := service.historyMarker()
+		marker := service.HistoryMarker()
 		if err := service.RequestHistorySync(ctx, 100); err != nil {
-			if errors.Is(err, ErrHistoryAnchorUnavailable) {
+			if errors.Is(err, wa.ErrHistoryAnchorUnavailable) {
 				fmt.Fprintln(os.Stderr, "No local history anchor is available for on-demand sync yet. Waiting only for WhatsApp's bootstrap sync.")
 			} else {
 				fmt.Fprintf(os.Stderr, "history sync request failed: %v\n", err)
 			}
 		} else {
-			seen = service.waitForHistoryQuiet(marker, 35*time.Second, 4*time.Second)
+			seen = service.WaitForHistoryQuiet(marker, 35*time.Second, 4*time.Second)
 		}
 	}
 	if err := service.SyncContacts(ctx); err != nil {
@@ -225,7 +226,7 @@ func postLoginSync(service *Service) {
 	if err := service.RefreshMissingChatNames(ctx, 100); err != nil {
 		fmt.Fprintf(os.Stderr, "chat name refresh failed: %v\n", err)
 	}
-	status, err := service.store.BuildStatus(service.IsConnected(), service.CurrentUserJID())
+	status, err := service.Store().BuildStatus(service.IsConnected(), service.CurrentUserJID())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "status snapshot failed: %v\n", err)
 		return
@@ -237,7 +238,7 @@ func postLoginSync(service *Service) {
 	fmt.Println()
 }
 
-func waitUntilConnected(service *Service, timeout time.Duration) bool {
+func waitUntilConnected(service *wa.Service, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if service.IsConnected() {
@@ -250,17 +251,17 @@ func waitUntilConnected(service *Service, timeout time.Duration) bool {
 
 func showQRCode(code string) {
 	if path, err := exec.LookPath("qrencode"); err == nil {
-		cmd := exec.Command(path, "-o", qrPath, "-t", "PNG", "-s", "10")
+		cmd := exec.Command(path, "-o", wa.QRPath, "-t", "PNG", "-s", "10")
 		cmd.Stdin = strings.NewReader(code)
 		if err := cmd.Run(); err == nil {
-			fmt.Printf("QR code written to %s\n", qrPath)
+			fmt.Printf("QR code written to %s\n", wa.QRPath)
 		}
 	}
 	qrterminal.GenerateHalfBlock(code, qrterminal.L, os.Stdout)
 	fmt.Println("Scan this QR with WhatsApp -> Linked Devices.")
 }
 
-func maybeConfigureAccess(store *Store) {
+func maybeConfigureAccess(store *wa.Store) {
 	configured, err := store.InitialAccessConfigured()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read access configuration: %v\n", err)
@@ -274,7 +275,7 @@ func maybeConfigureAccess(store *Store) {
 	}
 }
 
-func runAccessConfiguration(store *Store) error {
+func runAccessConfiguration(store *wa.Store) error {
 	chats, err := store.ListChats("all", 0, "")
 	if err != nil {
 		return err
@@ -315,7 +316,7 @@ func runAccessConfiguration(store *Store) error {
 }
 
 type accessSession struct {
-	allChats []ChatRecord
+	allChats []wa.ChatRecord
 	locked   map[string]bool
 	filter   string
 	query    string
@@ -323,7 +324,7 @@ type accessSession struct {
 	pageSize int
 }
 
-func newAccessSession(chats []ChatRecord) *accessSession {
+func newAccessSession(chats []wa.ChatRecord) *accessSession {
 	locked := make(map[string]bool, len(chats))
 	for _, chat := range chats {
 		locked[chat.JID] = chat.Locked
@@ -347,9 +348,9 @@ func (s *accessSession) unlockedJIDs() []string {
 	return out
 }
 
-func (s *accessSession) filteredChats() []ChatRecord {
+func (s *accessSession) filteredChats() []wa.ChatRecord {
 	query := strings.ToLower(strings.TrimSpace(s.query))
-	filtered := make([]ChatRecord, 0, len(s.allChats))
+	filtered := make([]wa.ChatRecord, 0, len(s.allChats))
 	for _, chat := range s.allChats {
 		chat.Locked = s.locked[chat.JID]
 		switch s.filter {
@@ -383,7 +384,7 @@ func (s *accessSession) filteredChats() []ChatRecord {
 	return filtered
 }
 
-func (s *accessSession) currentPageItems() ([]ChatRecord, int) {
+func (s *accessSession) currentPageItems() ([]wa.ChatRecord, int) {
 	filtered := s.filteredChats()
 	if s.pageSize <= 0 {
 		s.pageSize = 25
@@ -527,7 +528,7 @@ func handleAccessCommand(session *accessSession, input string) (bool, bool, erro
 	return false, false, nil
 }
 
-func currentVisibleChats(session *accessSession) []ChatRecord {
+func currentVisibleChats(session *accessSession) []wa.ChatRecord {
 	visible, _ := session.currentPageItems()
 	return visible
 }
@@ -622,8 +623,8 @@ func cmdDaemon() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{
-		Addr:    httpAddr,
-		Handler: newHTTPHandler(service),
+		Addr:    wa.HTTPAddr,
+		Handler: wa.NewHTTPHandler(service),
 	}
 
 	go func() {
@@ -634,7 +635,7 @@ func cmdDaemon() {
 		service.Disconnect()
 	}()
 
-	fmt.Printf("wacli daemon ready on http://%s\n", httpAddr)
+	fmt.Printf("wacli daemon ready on http://%s\n", wa.HTTPAddr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		die("http server: %v", err)
 	}
@@ -652,15 +653,15 @@ func cmdSync() {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	marker := service.historyMarker()
+	marker := service.HistoryMarker()
 	if err := service.RequestHistorySync(ctx, 100); err != nil {
-		if errors.Is(err, ErrHistoryAnchorUnavailable) {
+		if errors.Is(err, wa.ErrHistoryAnchorUnavailable) {
 			fmt.Println("No local history anchor is available yet, so on-demand sync cannot be requested. Bootstrap sync only happens after login from the primary device.")
 		} else {
 			die("request history sync: %v", err)
 		}
 	}
-	seen := service.waitForHistoryQuiet(marker, 40*time.Second, 4*time.Second)
+	seen := service.WaitForHistoryQuiet(marker, 40*time.Second, 4*time.Second)
 	if err := service.SyncContacts(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "contact sync failed: %v\n", err)
 	}
@@ -675,7 +676,7 @@ func cmdSync() {
 }
 
 func cmdStatus() {
-	var status StatusSnapshot
+	var status wa.StatusSnapshot
 	if err := callLocalAPI(http.MethodGet, "/status", nil, &status); err == nil {
 		fmt.Printf("connected: %v\n", status.Connected)
 		fmt.Printf("user: %s\n", status.UserJID)
@@ -801,7 +802,7 @@ func cmdAccess(args []string) {
 	}
 }
 
-func cmdAccessList(store *Store, args []string) {
+func cmdAccessList(store *wa.Store, args []string) {
 	fs := flag.NewFlagSet("access list", flag.ExitOnError)
 	filter := fs.String("filter", "all", "all|locked|unlocked|groups|dms")
 	query := fs.String("query", "", "search by name, jid, or preview")
@@ -821,7 +822,7 @@ func cmdAccessList(store *Store, args []string) {
 	renderAccessSession(session)
 }
 
-func cmdAccessSetLock(store *Store, locked bool, args []string) {
+func cmdAccessSetLock(store *wa.Store, locked bool, args []string) {
 	if len(args) == 0 {
 		action := "unlock"
 		if locked {
@@ -831,7 +832,7 @@ func cmdAccessSetLock(store *Store, locked bool, args []string) {
 	}
 	updated := 0
 	for _, ref := range args {
-		resolved, err := ResolveBestTarget(store, ref, ResolveOptions{
+		resolved, err := wa.ResolveBestTarget(store, ref, wa.ResolveOptions{
 			Kind:        "chat",
 			Limit:       10,
 			AllowDirect: true,
@@ -959,7 +960,7 @@ func cmdCall(args []string) {
 		fs := flag.NewFlagSet("call dump", flag.ExitOnError)
 		last := fs.Int("last", 0, "only show the last N stanzas")
 		_ = fs.Parse(args)
-		records, err := LoadCaptures(capturePath)
+		records, err := wa.LoadCaptures(wa.CapturePath)
 		if err != nil {
 			die("call dump: %v", err)
 		}
@@ -971,9 +972,9 @@ func cmdCall(args []string) {
 			records = records[len(records)-*last:]
 		}
 		for _, rec := range records {
-			fmt.Print(DescribeCapture(rec))
+			fmt.Print(wa.DescribeCapture(rec))
 		}
-		fmt.Fprintf(os.Stderr, "\n%d stanza(s) from %s\n", len(records), capturePath)
+		fmt.Fprintf(os.Stderr, "\n%d stanza(s) from %s\n", len(records), wa.CapturePath)
 	case "answer":
 		fs := flag.NewFlagSet("call answer", flag.ExitOnError)
 		id := fs.String("id", "", "call ID to answer (default: the only ringing call)")
@@ -1080,7 +1081,7 @@ func callLocalAPIWithTimeout(method, path string, body any, out any, timeout tim
 		}
 		reader = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequest(method, "http://"+httpAddr+path, reader)
+	req, err := http.NewRequest(method, "http://"+wa.HTTPAddr+path, reader)
 	if err != nil {
 		return err
 	}
@@ -1209,6 +1210,13 @@ notes:
   - Existing chats start locked after first login. You choose which chats the AI may touch.
   - New chats discovered after that are automatically unlocked.
   - Webhooks and outbound automation are only active while DND mode is ON.
-`, httpAddr)
+`, wa.HTTPAddr)
 	os.Exit(0)
+}
+
+// die prints to stderr and exits. It lives in the CLI, not the library: a package must never take
+// the process down on its caller's behalf.
+func die(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
 }

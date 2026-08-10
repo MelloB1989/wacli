@@ -1,4 +1,4 @@
-package main
+package wa
 
 import (
 	"database/sql"
@@ -1105,7 +1105,7 @@ func (s *Store) UpsertContactMemory(jid string, update ContactUpdate) (ContactRe
 	if errors.Is(err, sql.ErrNoRows) {
 		record = ContactRecord{
 			JID:       jid,
-			Phone:     normalizePhone(strings.TrimSuffix(jid, "@s.whatsapp.net")),
+			Phone:     NormalizePhone(strings.TrimSuffix(jid, "@s.whatsapp.net")),
 			Found:     true,
 			UpdatedAt: time.Now(),
 		}

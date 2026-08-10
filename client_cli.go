@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	wa "github.com/MelloB1989/wacli/wa"
 	"net/http"
 	"net/url"
 	"os"
@@ -256,7 +257,7 @@ func cmdBulkSend(args []string) {
 	fs.Var(&itemFlags, "item", "bulk item as JSON object or to=...,text=...,media=...")
 	_ = fs.Parse(args)
 
-	var items []BulkSendItem
+	var items []wa.BulkSendItem
 	for _, raw := range itemFlags {
 		item, err := parseBulkSendItemSpec(raw)
 		if err != nil {
@@ -538,14 +539,14 @@ func callLocalAPIQuery(method, path string, query url.Values, body any, out any)
 	return callLocalAPI(method, path, body, out)
 }
 
-func parseBulkSendInput(data []byte) ([]BulkSendItem, error) {
+func parseBulkSendInput(data []byte) ([]wa.BulkSendItem, error) {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
 		return nil, fmt.Errorf("no bulk send items provided")
 	}
 
 	if strings.HasPrefix(trimmed, "[") {
-		var items []BulkSendItem
+		var items []wa.BulkSendItem
 		if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
 			return nil, err
 		}
@@ -553,20 +554,20 @@ func parseBulkSendInput(data []byte) ([]BulkSendItem, error) {
 	}
 	if strings.HasPrefix(trimmed, "{") {
 		var wrapped struct {
-			Items []BulkSendItem `json:"items"`
+			Items []wa.BulkSendItem `json:"items"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &wrapped); err == nil && len(wrapped.Items) > 0 {
 			return wrapped.Items, nil
 		}
-		var item BulkSendItem
+		var item wa.BulkSendItem
 		if err := json.Unmarshal([]byte(trimmed), &item); err != nil {
 			return nil, err
 		}
-		return []BulkSendItem{item}, nil
+		return []wa.BulkSendItem{item}, nil
 	}
 
 	lines := strings.Split(trimmed, "\n")
-	items := make([]BulkSendItem, 0, len(lines))
+	items := make([]wa.BulkSendItem, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -581,23 +582,23 @@ func parseBulkSendInput(data []byte) ([]BulkSendItem, error) {
 	return items, nil
 }
 
-func parseBulkSendItemSpec(input string) (BulkSendItem, error) {
+func parseBulkSendItemSpec(input string) (wa.BulkSendItem, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
-		return BulkSendItem{}, fmt.Errorf("empty bulk item")
+		return wa.BulkSendItem{}, fmt.Errorf("empty bulk item")
 	}
 	if strings.HasPrefix(trimmed, "{") {
-		var item BulkSendItem
+		var item wa.BulkSendItem
 		if err := json.Unmarshal([]byte(trimmed), &item); err != nil {
-			return BulkSendItem{}, err
+			return wa.BulkSendItem{}, err
 		}
 		if strings.TrimSpace(item.To) == "" {
-			return BulkSendItem{}, fmt.Errorf("bulk item missing to")
+			return wa.BulkSendItem{}, fmt.Errorf("bulk item missing to")
 		}
 		return item, nil
 	}
 
-	item := BulkSendItem{}
+	item := wa.BulkSendItem{}
 	for _, part := range strings.Split(trimmed, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -605,7 +606,7 @@ func parseBulkSendItemSpec(input string) (BulkSendItem, error) {
 		}
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
-			return BulkSendItem{}, fmt.Errorf("invalid bulk item fragment %q", part)
+			return wa.BulkSendItem{}, fmt.Errorf("invalid bulk item fragment %q", part)
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
 		value = strings.TrimSpace(value)
@@ -617,11 +618,11 @@ func parseBulkSendItemSpec(input string) (BulkSendItem, error) {
 		case "media", "media_path":
 			item.MediaPath = value
 		default:
-			return BulkSendItem{}, fmt.Errorf("unsupported bulk item field %q", key)
+			return wa.BulkSendItem{}, fmt.Errorf("unsupported bulk item field %q", key)
 		}
 	}
 	if strings.TrimSpace(item.To) == "" {
-		return BulkSendItem{}, fmt.Errorf("bulk item missing to")
+		return wa.BulkSendItem{}, fmt.Errorf("bulk item missing to")
 	}
 	return item, nil
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MelloB1989/wacli/internal/daemonclient"
+	wacliclient "github.com/MelloB1989/wacli/client"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,10 +35,10 @@ var (
 )
 
 type tuiSnapshot struct {
-	Status     daemonclient.StatusSnapshot
-	Chats      []daemonclient.ChatRecord
-	Logs       []daemonclient.AppLogRecord
-	Webhooks   []daemonclient.WebhookRecord
+	Status     wacliclient.StatusSnapshot
+	Chats      []wacliclient.ChatRecord
+	Logs       []wacliclient.AppLogRecord
+	Webhooks   []wacliclient.WebhookRecord
 	ChatFilter string
 	FetchedAt  time.Time
 }
@@ -58,16 +58,16 @@ type tuiOpDoneMsg struct {
 type tuiTickMsg time.Time
 
 type tuiModel struct {
-	client *daemonclient.Client
+	client *wacliclient.Client
 
 	width  int
 	height int
 
 	active      tuiSection
-	status      daemonclient.StatusSnapshot
-	chats       []daemonclient.ChatRecord
-	logs        []daemonclient.AppLogRecord
-	webhooks    []daemonclient.WebhookRecord
+	status      wacliclient.StatusSnapshot
+	chats       []wacliclient.ChatRecord
+	logs        []wacliclient.AppLogRecord
+	webhooks    []wacliclient.WebhookRecord
 	chatFilter  string
 	lastRefresh time.Time
 
@@ -87,7 +87,7 @@ func newTUIModel() tuiModel {
 	input.Cursor.Style = tuiCursorStyle
 	input.Width = 64
 	return tuiModel{
-		client:     daemonclient.New(""),
+		client:     wacliclient.New(""),
 		active:     tuiSectionDashboard,
 		chatFilter: "all",
 		input:      input,
@@ -123,11 +123,11 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg{Err: err}
 		}
-		chats, err := client.ListChats(ctx, daemonclient.ChatListOptions{Filter: filter, Limit: 200})
+		chats, err := client.ListChats(ctx, wacliclient.ChatListOptions{Filter: filter, Limit: 200})
 		if err != nil {
 			return tuiErrMsg{Err: err}
 		}
-		logs, err := client.ListLogs(ctx, daemonclient.LogQuery{Limit: 200})
+		logs, err := client.ListLogs(ctx, wacliclient.LogQuery{Limit: 200})
 		if err != nil {
 			return tuiErrMsg{Err: err}
 		}

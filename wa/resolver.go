@@ -1,4 +1,4 @@
-package main
+package wa
 
 import (
 	"errors"
@@ -77,7 +77,7 @@ func ResolveTargets(store *Store, ref string, opts ResolveOptions) ([]ResolvedTa
 
 	candidates := map[string]ResolvedTarget{}
 	queryLower := strings.ToLower(ref)
-	queryPhone := normalizePhone(ref)
+	queryPhone := NormalizePhone(ref)
 	phoneLike := looksLikePhoneReference(ref)
 	queryUser := chatIDFromRef(ref)
 
@@ -277,7 +277,7 @@ func scoreReferenceAgainstChat(raw, lower, phone string, phoneLike bool, user st
 		return 1000, "jid_exact"
 	case user != "" && strings.EqualFold(user, chatUser):
 		return 980, "chat_id_exact"
-	case phoneLike && !chat.IsGroup && phone != "" && normalizePhone(chatUser) == phone:
+	case phoneLike && !chat.IsGroup && phone != "" && NormalizePhone(chatUser) == phone:
 		return 970, "phone_exact"
 	case lower != "" && lower == nameLower:
 		return 950, "chat_name_exact"
@@ -295,7 +295,7 @@ func scoreReferenceAgainstChat(raw, lower, phone string, phoneLike bool, user st
 func scoreReferenceAgainstContact(raw, lower, phone string, phoneLike bool, user string, contact ContactRecord, displayName string) (int, string) {
 	displayLower := strings.ToLower(displayName)
 	jidLower := strings.ToLower(contact.JID)
-	phoneNormalized := normalizePhone(contact.Phone)
+	phoneNormalized := NormalizePhone(contact.Phone)
 	switch {
 	case strings.EqualFold(raw, contact.JID):
 		return 995, "contact_jid_exact"
@@ -328,7 +328,7 @@ func directJIDCandidate(ref string) (types.JID, bool) {
 
 func looksLikePhoneReference(ref string) bool {
 	ref = strings.TrimSpace(ref)
-	if len(normalizePhone(ref)) < 6 {
+	if len(NormalizePhone(ref)) < 6 {
 		return false
 	}
 	pattern := regexp.MustCompile(`^[+0-9()\-\s]+$`)
