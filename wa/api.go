@@ -617,6 +617,107 @@ func NewHTTPHandler(service *Service) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/triggers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			list, err := service.store.ListTriggers()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"triggers": list, "events": KnownEvents()})
+		case http.MethodPost:
+			var body Trigger
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			created, err := service.store.CreateTrigger(body)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "trigger": created})
+		default:
+			writeMethodNotAllowed(w)
+		}
+	})
+
+	mux.HandleFunc("/triggers/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/triggers/")
+		if rest == "test" {
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w)
+				return
+			}
+			var body struct {
+				ID   int64  `json:"id"`
+				Chat string `json:"chat"`
+				Text string `json:"text"`
+			}
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			result, err := service.TestTrigger(body.ID, body.Chat, body.Text)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result})
+			return
+		}
+		id, err := strconv.ParseInt(strings.TrimSuffix(rest, "/"), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, errors.New("bad trigger id"))
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			trigger, err := service.store.GetTrigger(id)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"trigger": trigger})
+		case http.MethodPut:
+			var body Trigger
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			body.ID = id
+			updated, err := service.store.UpdateTrigger(body)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "trigger": updated})
+		case http.MethodPatch:
+			var body struct {
+				Enabled bool `json:"enabled"`
+			}
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			updated, err := service.store.SetTriggerEnabled(id, body.Enabled)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "trigger": updated})
+		case http.MethodDelete:
+			if err := service.store.DeleteTrigger(id); err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": id})
+		default:
+			writeMethodNotAllowed(w)
+		}
+	})
+
 	mux.HandleFunc("/webhooks", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/webhooks" {
 			handleWebhookDetail(service, w, r)

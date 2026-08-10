@@ -742,7 +742,7 @@ func (s *Service) onLiveMessage(evt *events.Message) {
 		return
 	}
 	s.dispatchWebhook("incoming_message", s.buildMessageWebhookPayload(chat, record, "whatsapp_event"))
-	go s.maybeSendAutoReply(chat, record)
+	go s.triggerEventForMessage(EventIncomingMessage, chat, record)
 }
 
 func (s *Service) maybeSendAutoReply(chat ChatRecord, incoming MessageRecord) {
@@ -2082,3 +2082,72 @@ func (s *Service) Client() *whatsmeow.Client { return s.client }
 
 // Store exposes the local database: chats, messages, contacts, webhooks, triggers and settings.
 func (s *Service) Store() *Store { return s.store }
+
+// ReactToMessage sends an emoji reaction to a message. An empty emoji removes an existing reaction,
+// which is how WhatsApp itself models "un-react".
+func (s *Service) ReactToMessage(ctx context.Context, chatRef, messageID, emoji string) error {
+	target, err := s.ResolveBestTarget(chatRef, "chat", true)
+	if err != nil {
+		return err
+	}
+	chatJID, err := types.ParseJID(target.JID)
+	if err != nil {
+		return err
+	}
+	if !s.client.IsConnected() {
+		return errors.New("WhatsApp client is not connected")
+	}
+	// The sender of the message being reacted to: our own JID for our messages, the chat otherwise.
+	sender := chatJID
+	if stored, err := s.store.GetMessage(messageID, target.JID); err == nil {
+		if stored.IsFromMe {
+			sender = s.client.Store.GetJID()
+		} else if stored.SenderJID != "" {
+			if parsed, err := types.ParseJID(stored.SenderJID); err == nil {
+				sender = parsed
+			}
+		}
+	}
+	reaction := s.client.BuildReaction(chatJID, sender, messageID, emoji)
+	if _, err := s.client.SendMessage(ctx, chatJID, reaction); err != nil {
+		return fmt.Errorf("send reaction: %w", err)
+	}
+	return nil
+}
+
+// MarkChatRead sends read receipts for a chat's unread messages, which is what clears the unread
+// badge on the other devices of this account.
+func (s *Service) MarkChatRead(ctx context.Context, chatRef string) error {
+	target, err := s.ResolveBestTarget(chatRef, "chat", true)
+	if err != nil {
+		return err
+	}
+	chatJID, err := types.ParseJID(target.JID)
+	if err != nil {
+		return err
+	}
+	if !s.client.IsConnected() {
+		return errors.New("WhatsApp client is not connected")
+	}
+	messages, err := s.store.ListMessages(target.JID, 50)
+	if err != nil {
+		return err
+	}
+	ids := make([]types.MessageID, 0, len(messages))
+	sender := chatJID
+	for _, m := range messages {
+		if m.IsFromMe {
+			continue
+		}
+		ids = append(ids, types.MessageID(m.ID))
+		if m.SenderJID != "" {
+			if parsed, err := types.ParseJID(m.SenderJID); err == nil {
+				sender = parsed
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.client.MarkRead(ctx, ids, time.Now(), chatJID, sender)
+}

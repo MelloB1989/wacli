@@ -329,6 +329,9 @@ CREATE INDEX IF NOT EXISTS idx_message_receipts_msg ON message_receipts(message_
 	if err := s.ensureMessageSchema(); err != nil {
 		return err
 	}
+	if err := s.ensureTriggerSchema(); err != nil {
+		return err
+	}
 
 	if err := s.ensureSettingDefault(settingDNDMode, "false"); err != nil {
 		return err

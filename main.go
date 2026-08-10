@@ -77,6 +77,8 @@ func main() {
 		cmdContacts(os.Args[2:])
 	case "webhooks":
 		cmdWebhooks(os.Args[2:])
+	case "triggers", "trigger":
+		cmdTriggers(os.Args[2:])
 	case "auto-replies", "autoreplies":
 		cmdAutoReplies(os.Args[2:])
 	case "api":
@@ -1219,4 +1221,139 @@ notes:
 func die(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// cmdTriggers manages the rule engine: match an event, run actions. See wa/triggers.go.
+func cmdTriggers(args []string) {
+	sub := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "", "list":
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, "/triggers", nil, &response); err != nil {
+			die("triggers: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "add":
+		fs := flag.NewFlagSet("triggers add", flag.ExitOnError)
+		name := fs.String("name", "", "rule name")
+		match := fs.String("match", "contains", "always|contains|exact|prefix|suffix|regex")
+		pattern := fs.String("pattern", "", "text to match")
+		scope := fs.String("scope", "all", "all|dms|groups|list")
+		chats := fs.String("chats", "", "comma-separated chat JIDs when --scope=list")
+		events := fs.String("events", "", "comma-separated event kinds (default incoming_message)")
+		reply := fs.String("reply", "", "send this text when it matches")
+		media := fs.String("media", "", "send this file when it matches")
+		react := fs.String("react", "", "react with this emoji")
+		forward := fs.String("forward", "", "forward the message to this chat")
+		hook := fs.String("webhook", "", "POST the event to this URL")
+		markRead := fs.Bool("mark-read", false, "mark the chat read")
+		priority := fs.Int("priority", 100, "evaluation order, lowest first")
+		cooldown := fs.Int("cooldown", 0, "seconds to wait before this rule may fire again per chat")
+		keepGoing := fs.Bool("continue", false, "let lower-priority rules run too")
+		_ = fs.Parse(args)
+		if *name == "" {
+			die("usage: wacli triggers add --name <name> [--match ...] [--pattern ...] --reply <text>")
+		}
+		actions := []map[string]any{}
+		if *reply != "" {
+			actions = append(actions, map[string]any{"type": "send_text", "text": *reply})
+		}
+		if *media != "" {
+			actions = append(actions, map[string]any{"type": "send_media", "media_path": absPath(*media), "text": *reply})
+		}
+		if *react != "" {
+			actions = append(actions, map[string]any{"type": "react", "emoji": *react})
+		}
+		if *forward != "" {
+			actions = append(actions, map[string]any{"type": "forward", "to": *forward})
+		}
+		if *hook != "" {
+			actions = append(actions, map[string]any{"type": "webhook", "url": *hook})
+		}
+		if *markRead {
+			actions = append(actions, map[string]any{"type": "mark_read"})
+		}
+		if len(actions) == 0 {
+			die("a trigger needs at least one action (--reply, --media, --react, --forward, --webhook, --mark-read)")
+		}
+		body := map[string]any{
+			"name": *name, "enabled": true, "priority": *priority,
+			"match_type": *match, "pattern": *pattern, "scope": *scope,
+			"actions": actions, "stop_on_match": !*keepGoing, "cooldown_seconds": *cooldown,
+		}
+		if *chats != "" {
+			body["chat_jids"] = splitCommaList(*chats)
+		}
+		if *events != "" {
+			body["events"] = splitCommaList(*events)
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/triggers", body, &response); err != nil {
+			die("triggers add: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "enable", "disable":
+		fs := flag.NewFlagSet("triggers "+sub, flag.ExitOnError)
+		id := fs.Int64("id", 0, "trigger ID")
+		_ = fs.Parse(args)
+		if *id == 0 && fs.NArg() > 0 {
+			*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
+		}
+		if *id == 0 {
+			die("usage: wacli triggers %s <id>", sub)
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPatch, fmt.Sprintf("/triggers/%d", *id),
+			map[string]any{"enabled": sub == "enable"}, &response); err != nil {
+			die("triggers %s: %v", sub, err)
+		}
+		prettyPrintJSON(response)
+	case "remove", "delete":
+		fs := flag.NewFlagSet("triggers remove", flag.ExitOnError)
+		id := fs.Int64("id", 0, "trigger ID")
+		_ = fs.Parse(args)
+		if *id == 0 && fs.NArg() > 0 {
+			*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
+		}
+		if *id == 0 {
+			die("usage: wacli triggers remove <id>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodDelete, fmt.Sprintf("/triggers/%d", *id), nil, &response); err != nil {
+			die("triggers remove: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "test":
+		fs := flag.NewFlagSet("triggers test", flag.ExitOnError)
+		id := fs.Int64("id", 0, "trigger ID")
+		chat := fs.String("chat", "", "chat to test against")
+		text := fs.String("text", "", "message text to test")
+		_ = fs.Parse(args)
+		if *id == 0 {
+			die("usage: wacli triggers test --id <id> --chat <ref> --text <message>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/triggers/test",
+			map[string]any{"id": *id, "chat": *chat, "text": *text}, &response); err != nil {
+			die("triggers test: %v", err)
+		}
+		prettyPrintJSON(response)
+	default:
+		die("unknown triggers subcommand %q (want: list, add, enable, disable, remove, test)", sub)
+	}
+}
+
+// splitCommaList turns "a,b, c" into []string{"a","b","c"}.
+func splitCommaList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
