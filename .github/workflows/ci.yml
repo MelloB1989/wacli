@@ -46,7 +46,15 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
+      # Built from source with this workflow's toolchain rather than installed by
+      # golangci-lint-action. The action downloads a prebuilt binary, and every golangci-lint v1
+      # release is built with Go 1.24, which refuses a module targeting Go 1.25 outright:
+      #
+      #   can't load config: the Go language version (go1.24) used to build golangci-lint
+      #   is lower than the targeted Go version (1.25.6)
+      #
+      # That is why this job had never once passed. Pinned rather than @latest so a new lint release
+      # cannot turn CI red on its own; v2 currently reports 22 pre-existing issues in code this
+      # ruleset was written against, so moving to it is a deliberate change, not a version bump.
+      - name: golangci-lint
+        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run --timeout=5m
