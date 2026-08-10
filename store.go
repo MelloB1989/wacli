@@ -200,6 +200,7 @@ type AssistantSettings struct {
 type StatusSnapshot struct {
 	Connected               bool       `json:"connected"`
 	UserJID                 string     `json:"user_jid,omitempty"`
+	UserLID                 string     `json:"user_lid,omitempty"`
 	DNDMode                 bool       `json:"dnd_mode"`
 	InitialAccessConfigured bool       `json:"initial_access_configured"`
 	ChatCount               int        `json:"chat_count"`

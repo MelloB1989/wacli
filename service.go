@@ -23,6 +23,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
+	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -51,10 +52,44 @@ type Service struct {
 	// delivering messages — and force a reconnect.
 	lastEventAt  time.Time
 	watchdogOnce sync.Once
+
+	// calls tracks in-flight and recently finished calls. See calls.go.
+	calls *callRegistry
+	// capture records raw call signaling stanzas when enabled. See callcapture.go.
+	capture *callCapture
+	// media carries actual call audio, via meowcaller. See callmedia.go.
+	media *callMedia
+	// queue serialises outgoing calls behind one active-call slot. See callqueue.go.
+	queue *callQueue
 }
 
+// StartCallCapture begins recording raw call stanzas to the capture file.
+func (s *Service) StartCallCapture() error { return s.capture.Enable() }
+
+// StopCallCapture stops recording call stanzas.
+func (s *Service) StopCallCapture() error { return s.capture.Close() }
+
 func NewService(store *Store) (*Service, error) {
-	log := waLog.Stdout("wacli", "WARN", true)
+	// WARN keeps normal runs quiet, but whatsmeow reports things like a failed call-key decrypt at
+	// DEBUG, so the level has to be reachable without rebuilding.
+	level := os.Getenv("WACLI_LOG_LEVEL")
+	if level == "" {
+		level = "WARN"
+	}
+	baseLog := waLog.Stdout("wacli", level, true)
+	// Wrap the logger so call stanzas can be tapped for protocol analysis. Capture stays off until
+	// something calls StartCallCapture, so this costs one type switch per logged stanza.
+	capture := newCallCapture(capturePath)
+	// Relay tokens are relay-scoped — a relay rejects a token minted for a different one with
+	// code 456 "Failed to decode allocate request". Yet the real client reaches relays the call
+	// offer never names, so it must obtain those tokens somewhere else. Capture normally starts
+	// only once something calls StartCallCapture, which is always after the connection is up, so
+	// anything exchanged during connection setup has never been visible. WACLI_CAPTURE=1 arms it
+	// from process start to find out.
+	if v := os.Getenv("WACLI_CAPTURE"); v == "1" || v == "2" {
+		_ = capture.Enable()
+	}
+	log := newCaptureLogger(baseLog, capture)
 	db, err := sql.Open("sqlite3", sessionDBPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open session db: %w", err)
@@ -85,12 +120,33 @@ func NewService(store *Store) (*Service, error) {
 		sessionDB:        db,
 		log:              log,
 		historySyncTypes: map[string]int{},
+		calls:            newCallRegistry(),
+		capture:          capture,
+		queue:            &callQueue{},
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
 	service.registerEventHandlers()
+	// Bring the media stack up before anything connects: meowcaller installs its handlers by
+	// reaching into whatsmeow's unexported nodeHandlers, and refuses to once the receive loop is
+	// running. Without it an outbound call never learns its relay and carries no audio.
+	service.media = newCallMedia(service, mediaLogger(level))
 	return service, nil
+}
+
+// mediaLogger adapts wacli's log level to the zerolog logger meowcaller takes.
+//
+// It floors at info: meowcaller reports the milestones that say whether a call will carry audio at
+// all — the relay arriving in the offer ack, the first inbound RTP — at that level, and calls are
+// rare enough that the noise costs nothing. WACLI_LOG_LEVEL=DEBUG still turns everything up.
+func mediaLogger(level string) zerolog.Logger {
+	lvl, err := zerolog.ParseLevel(strings.ToLower(level))
+	if err != nil || lvl == zerolog.NoLevel || lvl > zerolog.InfoLevel {
+		lvl = zerolog.InfoLevel
+	}
+	return zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.000"}).
+		Level(lvl).With().Timestamp().Logger()
 }
 
 func (s *Service) Close() error {
@@ -127,6 +183,14 @@ func (s *Service) registerEventHandlers() {
 			s.onHistorySync(v)
 		case *events.Receipt:
 			s.onReceipt(v)
+		case *events.CallOffer:
+			s.onCallOffer(v)
+		case *events.CallAccept:
+			s.onCallAccept(v)
+		case *events.CallTerminate:
+			s.onCallTerminate(v)
+		case *events.CallReject:
+			s.onCallReject(v)
 		case *events.KeepAliveTimeout:
 			// Keepalive pings are failing: the connection is dead even though the
 			// socket may still look open. Force a reconnect rather than sitting
@@ -227,6 +291,15 @@ func (s *Service) CurrentUserJID() string {
 		return ""
 	}
 	return s.client.Store.ID.String()
+}
+
+// CurrentUserLID returns this device's LID, which call media needs: the peer derives the SSRC it
+// expects from the LID, not from the phone-number JID (see ssrc.go).
+func (s *Service) CurrentUserLID() string {
+	if s.client.Store.LID.IsEmpty() {
+		return ""
+	}
+	return s.client.Store.LID.String()
 }
 
 func (s *Service) historyMarker() int {
@@ -1711,7 +1784,7 @@ func (s *Service) DownloadMedia(ctx context.Context, messageID, chatJID string) 
 		directPath = extractDirectPathFromURL(record.URL)
 	}
 	mediaType, mmsType := mediaTypeForKind(record.MediaType)
-	data, err := s.client.DownloadMediaWithPath(ctx, directPath, record.FileEncSHA256, record.FileSHA256, record.MediaKey, int(record.FileLength), mediaType, mmsType)
+	data, err := s.client.DownloadMediaWithPath(ctx, directPath, record.FileEncSHA256, record.FileSHA256, record.MediaKey, mediaType, mmsType, false)
 	if err != nil {
 		return "", err
 	}

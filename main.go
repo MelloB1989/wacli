@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"os/signal"
 	"sort"
@@ -62,6 +64,8 @@ func main() {
 		cmdBulkSend(os.Args[2:])
 	case "story":
 		cmdStory(os.Args[2:])
+	case "call":
+		cmdCall(os.Args[2:])
 	case "media":
 		cmdMedia(os.Args[2:])
 	case "resolve":
@@ -81,6 +85,23 @@ func main() {
 	default:
 		usage()
 	}
+}
+
+// absPath resolves a user-supplied file path against the shell's working directory.
+//
+// Audio and recording paths are handed to the daemon as text over the local API, and the daemon
+// resolves what it receives against its own working directory — which is wherever it was started,
+// not where the command was typed. Making them absolute here keeps "--record peer.wav" meaning the
+// directory the user is standing in.
+func absPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return abs
 }
 
 func openStoreOrDie() *Store {
@@ -869,6 +890,168 @@ func cmdSend(args []string) {
 	prettyPrintJSON(response)
 }
 
+func cmdCall(args []string) {
+	sub := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "list":
+		fs := flag.NewFlagSet("call list", flag.ExitOnError)
+		activeOnly := fs.Bool("active", false, "only show calls that are still ringing or connected")
+		_ = fs.Parse(args)
+		path := "/calls"
+		if *activeOnly {
+			path += "?active=true"
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, path, nil, &response); err != nil {
+			die("call list: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "end", "hangup":
+		fs := flag.NewFlagSet("call end", flag.ExitOnError)
+		id := fs.String("id", "", "call ID to hang up")
+		reason := fs.String("reason", "", "termination reason (default: hangup)")
+		_ = fs.Parse(args)
+		if *id == "" {
+			die("usage: wacli call end --id <call-id> [--reason <reason>]")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/calls/end", map[string]any{
+			"call_id": *id,
+			"reason":  *reason,
+		}, &response); err != nil {
+			die("call end: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "status":
+		fs := flag.NewFlagSet("call status", flag.ExitOnError)
+		_ = fs.Parse(args)
+		ref := ""
+		if fs.NArg() > 0 {
+			ref = fs.Arg(0)
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet,
+			"/calls/status?ref="+url.QueryEscape(ref), nil, &response); err != nil {
+			die("call status: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "queue":
+		fs := flag.NewFlagSet("call queue", flag.ExitOnError)
+		_ = fs.Parse(args)
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, "/calls/queue", nil, &response); err != nil {
+			die("call queue: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "capture":
+		fs := flag.NewFlagSet("call capture", flag.ExitOnError)
+		off := fs.Bool("off", false, "stop capturing")
+		_ = fs.Parse(args)
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/calls/capture", map[string]any{
+			"enabled": !*off,
+		}, &response); err != nil {
+			die("call capture: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "dump":
+		fs := flag.NewFlagSet("call dump", flag.ExitOnError)
+		last := fs.Int("last", 0, "only show the last N stanzas")
+		_ = fs.Parse(args)
+		records, err := LoadCaptures(capturePath)
+		if err != nil {
+			die("call dump: %v", err)
+		}
+		if len(records) == 0 {
+			fmt.Println("no captured call stanzas yet — run 'wacli call capture' first, then make a call")
+			return
+		}
+		if *last > 0 && *last < len(records) {
+			records = records[len(records)-*last:]
+		}
+		for _, rec := range records {
+			fmt.Print(DescribeCapture(rec))
+		}
+		fmt.Fprintf(os.Stderr, "\n%d stanza(s) from %s\n", len(records), capturePath)
+	case "answer":
+		fs := flag.NewFlagSet("call answer", flag.ExitOnError)
+		id := fs.String("id", "", "call ID to answer (default: the only ringing call)")
+		say := fs.String("say", "", "speak this text into the call")
+		voice := fs.String("voice", "", "voice for --say (see: say -v '?')")
+		audio := fs.String("audio", "", ".wav/.mp3/.opus to play instead of --say")
+		repeat := fs.Bool("repeat", false, "loop the audio instead of hanging up when it ends")
+		record := fs.String("record", "", "write the other party's voice to this .wav")
+		_ = fs.Parse(args)
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/calls/answer", map[string]any{
+			"call_id": *id,
+			"say":     *say,
+			"voice":   *voice,
+			"audio":   absPath(*audio),
+			"repeat":  *repeat,
+			"record":  absPath(*record),
+		}, &response); err != nil {
+			die("call answer: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "reject", "decline":
+		fs := flag.NewFlagSet("call reject", flag.ExitOnError)
+		id := fs.String("id", "", "call ID to decline")
+		_ = fs.Parse(args)
+		if *id == "" {
+			die("usage: wacli call reject --id <call-id>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/calls/reject", map[string]any{
+			"call_id": *id,
+		}, &response); err != nil {
+			die("call reject: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "", "place", "dial":
+		fs := flag.NewFlagSet("call", flag.ExitOnError)
+		to := fs.String("to", "", "recipient JID or phone number")
+		video := fs.Bool("video", false, "place a video call instead of a voice call")
+		ringFor := fs.Int("ring-for", 0, "seconds to ring before hanging up automatically (default 45)")
+		noExpire := fs.Bool("no-expire", false, "keep ringing until explicitly ended")
+		say := fs.String("say", "", "speak this text once they answer")
+		voice := fs.String("voice", "", "voice for --say (see: say -v '?')")
+		audio := fs.String("audio", "", ".wav/.mp3/.opus to play instead of --say")
+		repeat := fs.Bool("repeat", false, "loop the audio instead of hanging up when it ends")
+		record := fs.String("record", "", "write the other party's voice to this .wav")
+		_ = fs.Parse(args)
+		if *to == "" && fs.NArg() > 0 {
+			*to = fs.Arg(0)
+		}
+		if *to == "" {
+			die("usage: wacli call --to <jid|phone> [--say <text> | --audio <file>] [--video]")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/calls", map[string]any{
+			"to":               *to,
+			"video":            *video,
+			"ring_for_seconds": *ringFor,
+			"no_expire":        *noExpire,
+			"say":              *say,
+			"voice":            *voice,
+			"audio":            absPath(*audio),
+			"repeat":           *repeat,
+			"record":           absPath(*record),
+		}, &response); err != nil {
+			die("call: %v", err)
+		}
+		prettyPrintJSON(response)
+		if *say == "" && *audio == "" {
+			fmt.Fprintln(os.Stderr, "note: no --say/--audio, so this call rings but carries no audio.")
+		}
+	default:
+		die("unknown call subcommand %q (want: place, answer, status, queue, list, end, reject, capture, dump)", sub)
+	}
+}
+
 func cmdStory(args []string) {
 	fs := flag.NewFlagSet("story", flag.ExitOnError)
 	text := fs.String("text", "", "story text")
@@ -968,6 +1151,17 @@ usage:
   wacli bulk-send ...           send many messages from JSON items, file, or stdin
   wacli media download ...      download message media by chat reference + message ID
   wacli story [--text ...]      post a WhatsApp story/status through the daemon
+  wacli call --to ...           ring a contact (signaling only — carries no audio)
+  wacli call list               show active and recent calls
+  wacli call end --id ...       hang up a ringing or ongoing call
+  wacli call reject --id ...    decline an incoming call
+  wacli call capture [--off]    record raw call signaling stanzas for analysis
+  wacli call bind [--v6]        attempt a TURN allocation using a captured relay token
+  wacli call hold [--for 30s]   allocate and keep it alive with relay-pings
+  wacli call status [<c1|id>]  show one call: state, duration, media, and the queue
+  wacli call queue             show the active call and everything waiting behind it
+  wacli call answer [--say s]  accept a ringing call and speak into it
+  wacli call dump [--last N]    print captured call stanzas as an annotated tree
   wacli webhooks ...            list, add, remove, and inspect webhook delivery logs
   wacli openclaw ...            list, add, update, remove, replay, and inspect OpenClaw bridges
   wacli auto-replies ...        list, add, and remove auto-reply rules
@@ -992,6 +1186,15 @@ AI-facing HTTP API:
   GET    /messages/receipts
   POST   /bulk_send
   POST   /stories
+  GET    /calls
+  POST   /calls
+  GET    /calls/status?ref=<c1|call-id>
+  GET    /calls/queue
+  POST   /calls/answer
+  POST   /calls/accept
+  POST   /calls/end
+  POST   /calls/reject
+  POST   /calls/capture
   POST   /media/download
   GET    /contacts
   GET    /contacts/lookup

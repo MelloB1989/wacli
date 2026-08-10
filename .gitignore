@@ -24,3 +24,12 @@ desktop/frontend/wailsjs/
 desktop/WACLI
 desktop/wacli
 desktop/build/bin/
+
+# Call captures hold live key material — e2e call keys, relay tokens, SRTP masters.
+# Never publish these.
+*.jsonl
+*.pcap
+
+# Local-only research archive: the from-scratch call media stack, its test audio and
+# capture harnesses. Kept on disk, deliberately never committed.
+/_research/

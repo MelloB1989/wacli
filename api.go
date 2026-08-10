@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.mau.fi/whatsmeow/types"
 )
 
 func newHTTPHandler(service *Service) http.Handler {
@@ -26,6 +29,7 @@ func newHTTPHandler(service *Service) http.Handler {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		status.UserLID = service.CurrentUserLID()
 		writeJSON(w, http.StatusOK, status)
 	})
 
@@ -397,6 +401,225 @@ func newHTTPHandler(service *Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	mux.HandleFunc("/calls", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, map[string]any{
+				"calls": service.ListCalls(r.URL.Query().Get("active") == "true"),
+			})
+		case http.MethodPost:
+			var body struct {
+				To       string `json:"to"`
+				Video    bool   `json:"video,omitempty"`
+				RingFor  int    `json:"ring_for_seconds,omitempty"`
+				NoExpire bool   `json:"no_expire,omitempty"`
+				Say      string `json:"say,omitempty"`
+				Voice    string `json:"voice,omitempty"`
+				Audio    string `json:"audio,omitempty"`
+				Repeat   bool   `json:"repeat,omitempty"`
+				Record   string `json:"record,omitempty"`
+			}
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if strings.TrimSpace(body.To) == "" {
+				writeError(w, http.StatusBadRequest, errors.New("to is required"))
+				return
+			}
+			opts := PlaceCallOptions{Video: body.Video, Audio: AudioRequest{
+				Say: body.Say, Voice: body.Voice, File: body.Audio, Repeat: body.Repeat,
+				Record: body.Record,
+			}}
+			switch {
+			case body.NoExpire:
+				opts.RingFor = -1
+			case body.RingFor > 0:
+				opts.RingFor = time.Duration(body.RingFor) * time.Second
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+			defer cancel()
+			info, err := service.PlaceCall(ctx, body.To, opts)
+			if err != nil {
+				writeError(w, automationStatus(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
+		default:
+			writeMethodNotAllowed(w)
+		}
+	})
+
+	mux.HandleFunc("/calls/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+		ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+		if ref == "" {
+			ref = strings.TrimSpace(r.URL.Query().Get("call_id"))
+		}
+		status, err := service.CallStatus(ref)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"call": status, "queue": service.CallQueueStatus()})
+	})
+
+	mux.HandleFunc("/calls/queue", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"queue": service.CallQueueStatus()})
+	})
+
+	mux.HandleFunc("/calls/answer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			CallID string `json:"call_id,omitempty"`
+			Say    string `json:"say,omitempty"`
+			Voice  string `json:"voice,omitempty"`
+			Audio  string `json:"audio,omitempty"`
+			Repeat bool   `json:"repeat,omitempty"`
+			Record string `json:"record,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		id, err := service.AnswerWithAudio(body.CallID, AudioRequest{
+			Say: body.Say, Voice: body.Voice, File: body.Audio, Repeat: body.Repeat,
+			Record: body.Record,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call_id": id})
+	})
+
+	mux.HandleFunc("/calls/capture", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		var err error
+		if body.Enabled {
+			err = service.StartCallCapture()
+		} else {
+			err = service.StopCallCapture()
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": body.Enabled, "path": capturePath})
+	})
+
+	mux.HandleFunc("/calls/end", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			CallID string `json:"call_id"`
+			Reason string `json:"reason,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		info, err := service.EndCall(ctx, body.CallID, body.Reason)
+		if err != nil {
+			writeError(w, callErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
+	})
+
+	mux.HandleFunc("/calls/accept", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			CallID string `json:"call_id"`
+			// Candidates are the addresses the caller should send media to. A real client always
+			// sends at least one; without them the peer keeps ringing because it has nowhere to go.
+			Candidates []struct {
+				IP       string `json:"ip"`
+				Port     uint16 `json:"port"`
+				Priority int    `json:"priority"`
+			} `json:"candidates"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		// With no call_id, accept whatever is ringing — that is what a caller normally wants.
+		if body.CallID == "" {
+			latest, ok := service.LatestRingingCall()
+			if !ok {
+				writeError(w, http.StatusNotFound, errors.New("no incoming call is ringing"))
+				return
+			}
+			body.CallID = latest.CallID
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		cands := make([]types.CallCandidate, 0, len(body.Candidates))
+		for _, c := range body.Candidates {
+			ip := net.ParseIP(c.IP)
+			if ip == nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("bad candidate IP %q", c.IP))
+				return
+			}
+			cands = append(cands, types.CallCandidate{IP: ip, Port: c.Port, Priority: c.Priority})
+		}
+		info, err := service.AcceptIncomingCall(ctx, body.CallID, cands...)
+		if err != nil {
+			writeError(w, callErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
+	})
+
+	mux.HandleFunc("/calls/reject", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			CallID string `json:"call_id"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		info, err := service.RejectIncomingCall(ctx, body.CallID)
+		if err != nil {
+			writeError(w, callErrorStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
 	})
 
 	mux.HandleFunc("/media/download", func(w http.ResponseWriter, r *http.Request) {
@@ -1155,6 +1378,15 @@ func pathParam(path, prefix string) (string, error) {
 		return "", err
 	}
 	return decoded, nil
+}
+
+// callErrorStatus maps call control failures to HTTP statuses. An unknown or already-finished call
+// is a 404 rather than a generic bad request, since clients poll /calls to find live ones.
+func callErrorStatus(err error) int {
+	if errors.Is(err, errCallNotActive) {
+		return http.StatusNotFound
+	}
+	return automationStatus(err)
 }
 
 func automationStatus(err error) int {
