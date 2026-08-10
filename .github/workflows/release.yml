@@ -22,8 +22,11 @@ jobs:
         include:
           - { os: linux,   arch: amd64, runner: ubuntu-latest }
           - { os: darwin,  arch: arm64, runner: macos-latest }
-          - { os: darwin,  arch: amd64, runner: macos-13 }
-          # CGO/SQLite means we build on native runners, not cross-compile.
+          - { os: darwin,  arch: amd64, runner: macos-latest }
+          # CGO/SQLite rules out cross-compiling between operating systems, so linux and darwin build
+          # on their own runners. Crossing architectures within macOS is fine, though: Apple's clang
+          # targets either with -arch, and the darwin/amd64 job used to sit on macos-13, which GitHub
+          # has since retired — it queued forever and every release shipped without an Intel binary.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,9 +42,17 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "1"
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
         run: |
           out="wacli-${{ matrix.os }}-${{ matrix.arch }}"
+          # Point the C toolchain at the same architecture Go is targeting, or CGO builds host-native
+          # objects and the link fails.
+          if [ "${{ matrix.os }}" = "darwin" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+            export CGO_CFLAGS="-arch x86_64" CGO_LDFLAGS="-arch x86_64"
+          fi
           go build -ldflags "-s -w -X main.version=${{ steps.v.outputs.version }}" -o "$out" .
+          file "$out" || true
           shasum -a 256 "$out" > "$out.sha256" || sha256sum "$out" > "$out.sha256"
 
       - name: Upload to release
