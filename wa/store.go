@@ -99,25 +99,33 @@ type WebhookRecord struct {
 	// when they @-mention this account, so a consumer can react to being
 	// summoned anywhere. Pure transport: what to do with those events (e.g.
 	// ignoring "@all" blasts) is the consumer's policy, not wacli's.
-	IncludeMentions bool      `json:"include_mentions"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	IncludeMentions bool `json:"include_mentions"`
+	// MaxAttempts bounds delivery retries; TimeoutSeconds bounds one attempt. Zero means the
+	// defaults in webhookdelivery.go.
+	MaxAttempts    int       `json:"max_attempts"`
+	TimeoutSeconds int       `json:"timeout_seconds"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type WebhookDeliveryRecord struct {
-	ID           int64     `json:"id"`
-	WebhookID    int64     `json:"webhook_id"`
-	URL          string    `json:"url"`
-	Event        string    `json:"event"`
-	ChatJID      string    `json:"chat_jid,omitempty"`
-	MessageID    string    `json:"message_id,omitempty"`
-	Status       string    `json:"status"`
-	HTTPStatus   int       `json:"http_status,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	ResponseBody string    `json:"response_body,omitempty"`
-	RequestBody  string    `json:"request_body,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int64  `json:"id"`
+	WebhookID    int64  `json:"webhook_id"`
+	URL          string `json:"url"`
+	Event        string `json:"event"`
+	ChatJID      string `json:"chat_jid,omitempty"`
+	MessageID    string `json:"message_id,omitempty"`
+	Status       string `json:"status"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	LastError    string `json:"last_error,omitempty"`
+	ResponseBody string `json:"response_body,omitempty"`
+	RequestBody  string `json:"request_body,omitempty"`
+	// Attempts is how many POSTs this delivery took. NextRetryAt is when the next one is due while
+	// the status is "retrying".
+	Attempts    int       `json:"attempts"`
+	NextRetryAt time.Time `json:"next_retry_at,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type AutoReplyRule struct {
@@ -352,9 +360,23 @@ func (s *Store) ensureWebhookSchema() error {
 		{name: "message_types", ddl: `TEXT NOT NULL DEFAULT '["*"]'`},
 		{name: "context_limit", ddl: "INTEGER NOT NULL DEFAULT 12"},
 		{name: "include_mentions", ddl: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "max_attempts", ddl: "INTEGER NOT NULL DEFAULT 5"},
+		{name: "timeout_seconds", ddl: "INTEGER NOT NULL DEFAULT 10"},
 	}
 	for _, column := range columns {
 		if err := s.ensureTableColumn("webhooks", column.name, column.ddl); err != nil {
+			return err
+		}
+	}
+	deliveryColumns := []struct {
+		name string
+		ddl  string
+	}{
+		{name: "attempts", ddl: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "next_retry_at", ddl: "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range deliveryColumns {
+		if err := s.ensureTableColumn("webhook_deliveries", column.name, column.ddl); err != nil {
 			return err
 		}
 	}
@@ -1234,7 +1256,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 }
 
 func (s *Store) ListWebhooks() ([]WebhookRecord, error) {
-	rows, err := s.db.Query(`SELECT id, url, secret, events, scope, chat_jids, message_types, context_limit, enabled, include_mentions, created_at, updated_at FROM webhooks ORDER BY id ASC`)
+	rows, err := s.db.Query(`SELECT id, url, secret, events, scope, chat_jids, message_types, context_limit, enabled, include_mentions, max_attempts, timeout_seconds, created_at, updated_at FROM webhooks ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1246,7 +1268,7 @@ func (s *Store) ListWebhooks() ([]WebhookRecord, error) {
 		var eventsJSON, chatJIDsJSON, messageTypesJSON string
 		var enabled, includeMentions int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&record.ID, &record.URL, &record.Secret, &eventsJSON, &record.Scope, &chatJIDsJSON, &messageTypesJSON, &record.ContextLimit, &enabled, &includeMentions, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.URL, &record.Secret, &eventsJSON, &record.Scope, &chatJIDsJSON, &messageTypesJSON, &record.ContextLimit, &enabled, &includeMentions, &record.MaxAttempts, &record.TimeoutSeconds, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		record.Enabled = intToBool(enabled)
@@ -1527,4 +1549,73 @@ func (s *Store) BuildStatus(connected bool, userJID string) (StatusSnapshot, err
 		MessageCount:            messageCount,
 		LastHistorySync:         lastHistorySync,
 	}, nil
+}
+
+// --- webhook delivery bookkeeping ---
+
+// FinishWebhookDeliveryAttempt closes a delivery, recording how many attempts it took.
+func (s *Store) FinishWebhookDeliveryAttempt(id int64, status string, httpStatus int, lastError, responseBody string, attempts int) error {
+	if strings.TrimSpace(status) == "" {
+		status = "done"
+	}
+	_, err := s.db.Exec(`
+UPDATE webhook_deliveries
+SET status = ?, http_status = ?, last_error = ?, response_body = ?, attempts = ?, next_retry_at = 0, updated_at = ?
+WHERE id = ?
+`, status, httpStatus, truncateString(lastError, 4000), truncateString(responseBody, 16000),
+		attempts, time.Now().Unix(), id)
+	return err
+}
+
+// RecordWebhookRetry marks a delivery as awaiting another attempt, so an operator watching the
+// delivery log can tell "retrying" apart from "given up".
+func (s *Store) RecordWebhookRetry(id int64, attempts int, lastError string, httpStatus int, nextRetry time.Time) error {
+	_, err := s.db.Exec(`
+UPDATE webhook_deliveries
+SET status = 'retrying', attempts = ?, last_error = ?, http_status = ?, next_retry_at = ?, updated_at = ?
+WHERE id = ?
+`, attempts, truncateString(lastError, 4000), httpStatus, nextRetry.Unix(), time.Now().Unix(), id)
+	return err
+}
+
+// GetWebhookDelivery returns one delivery record, including the body needed to replay it.
+func (s *Store) GetWebhookDelivery(id int64) (WebhookDeliveryRecord, error) {
+	row := s.db.QueryRow(`
+SELECT id, webhook_id, url, event, chat_jid, message_id, status, http_status, last_error,
+       response_body, request_body, attempts, next_retry_at, created_at, updated_at
+FROM webhook_deliveries WHERE id = ?`, id)
+
+	var (
+		rec                             WebhookDeliveryRecord
+		nextRetry, createdAt, updatedAt int64
+	)
+	err := row.Scan(&rec.ID, &rec.WebhookID, &rec.URL, &rec.Event, &rec.ChatJID, &rec.MessageID,
+		&rec.Status, &rec.HTTPStatus, &rec.LastError, &rec.ResponseBody, &rec.RequestBody,
+		&rec.Attempts, &nextRetry, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return WebhookDeliveryRecord{}, fmt.Errorf("no webhook delivery %d", id)
+	}
+	if err != nil {
+		return WebhookDeliveryRecord{}, err
+	}
+	if nextRetry > 0 {
+		rec.NextRetryAt = time.Unix(nextRetry, 0)
+	}
+	rec.CreatedAt = time.Unix(createdAt, 0)
+	rec.UpdatedAt = time.Unix(updatedAt, 0)
+	return rec, nil
+}
+
+// GetWebhook returns one webhook subscription.
+func (s *Store) GetWebhook(id int64) (WebhookRecord, error) {
+	hooks, err := s.ListWebhooks()
+	if err != nil {
+		return WebhookRecord{}, err
+	}
+	for _, hook := range hooks {
+		if hook.ID == id {
+			return hook, nil
+		}
+	}
+	return WebhookRecord{}, fmt.Errorf("no webhook %d", id)
 }

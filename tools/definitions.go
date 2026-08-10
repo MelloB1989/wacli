@@ -420,6 +420,22 @@ func (t *Tools) WebhookTools() []ai.GoFunctionTool {
 				return result(t.c.DeleteWebhook(ctx, int64(argInt(p, "id"))))
 			}),
 
+		tool("whatsapp_test_webhook",
+			"Fire a synthetic event at a webhook to check the endpoint is reachable and the signature "+
+				"verifies, without waiting for a real WhatsApp event. Use it right after creating one.",
+			object(map[string]any{"id": intp("Webhook ID.")}, "id"),
+			func(ctx context.Context, p ai.FuncParams) (string, error) {
+				return result(t.c.TestWebhook(ctx, int64(argInt(p, "id"))))
+			}),
+
+		tool("whatsapp_replay_webhook_delivery",
+			"Re-send a recorded webhook delivery, unchanged. Use it when the consumer was down or broken "+
+				"at the time and has since been fixed \u2014 the event is still on disk.",
+			object(map[string]any{"id": intp("Delivery ID from whatsapp_webhook_deliveries.")}, "id"),
+			func(ctx context.Context, p ai.FuncParams) (string, error) {
+				return result(t.c.ReplayDelivery(ctx, int64(argInt(p, "id"))))
+			}),
+
 		tool("whatsapp_webhook_deliveries",
 			"Inspect recent webhook delivery attempts, to debug an endpoint that is not receiving events.",
 			object(map[string]any{"limit": intp("Maximum records. Default 50.")}),

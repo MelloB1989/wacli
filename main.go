@@ -1202,6 +1202,8 @@ AI-facing HTTP API:
   GET    /webhooks
   POST   /webhooks
   DELETE /webhooks/{id}
+  POST   /webhooks/test
+  POST   /webhook_deliveries/replay
   GET    /webhook_deliveries
   GET    /auto_replies
   POST   /auto_replies

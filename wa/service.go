@@ -2,14 +2,10 @@ package wa
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"os"
@@ -1813,7 +1809,7 @@ func (s *Service) dispatchWebhook(event string, payload map[string]any) {
 			s.log.Warnf("start webhook delivery %d/%s/%s: %v", webhook.ID, chatJID, messageID, err)
 			deliveryID = 0
 		}
-		go s.postWebhook(webhook, event, deliveryID, body)
+		go s.deliverWebhook(webhook, event, deliveryID, body)
 	}
 }
 
@@ -1921,67 +1917,6 @@ func deliveryPayloadIdentifiers(payload map[string]any) (string, string) {
 		}
 	}
 	return chatJID, messageID
-}
-
-func (s *Service) postWebhook(webhook WebhookRecord, event string, deliveryID int64, body []byte) {
-	req, err := http.NewRequest(http.MethodPost, webhook.URL, strings.NewReader(string(body)))
-	if err != nil {
-		s.log.Warnf("create webhook request %s: %v", webhook.URL, err)
-		if deliveryID > 0 {
-			_ = s.store.FinishWebhookDelivery(deliveryID, "failed", 0, err.Error(), "")
-		}
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "wacli/2")
-	if webhook.Secret != "" {
-		mac := hmac.New(sha256.New, []byte(webhook.Secret))
-		_, _ = mac.Write(body)
-		req.Header.Set("X-WACLI-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	}
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		s.log.Warnf("deliver webhook %s: %v", webhook.URL, err)
-		if deliveryID > 0 {
-			_ = s.store.FinishWebhookDelivery(deliveryID, "failed", 0, err.Error(), "")
-		}
-		_ = s.store.AddAppLog("error", "webhook", fmt.Sprintf("Webhook %d delivery failed", webhook.ID), map[string]any{
-			"webhook_id": webhook.ID,
-			"url":        webhook.URL,
-			"event":      event,
-			"error":      strings.TrimSpace(err.Error()),
-		})
-		fmt.Printf("webhook delivery webhook_id=%d event=%s status=failed url=%s error=%s\n", webhook.ID, event, webhook.URL, strings.TrimSpace(err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	responseBody := strings.TrimSpace(string(data))
-	if resp.StatusCode >= 300 {
-		s.log.Warnf("webhook %s returned %d: %s", webhook.URL, resp.StatusCode, responseBody)
-		if deliveryID > 0 {
-			_ = s.store.FinishWebhookDelivery(deliveryID, "failed", resp.StatusCode, responseBody, responseBody)
-		}
-		_ = s.store.AddAppLog("error", "webhook", fmt.Sprintf("Webhook %d returned %d", webhook.ID, resp.StatusCode), map[string]any{
-			"webhook_id":  webhook.ID,
-			"url":         webhook.URL,
-			"event":       event,
-			"http_status": resp.StatusCode,
-			"response":    responseBody,
-		})
-		fmt.Printf("webhook delivery webhook_id=%d event=%s status=failed http_status=%d url=%s\n", webhook.ID, event, resp.StatusCode, webhook.URL)
-		return
-	}
-	if deliveryID > 0 {
-		_ = s.store.FinishWebhookDelivery(deliveryID, "done", resp.StatusCode, "", responseBody)
-	}
-	_ = s.store.AddAppLog("info", "webhook", fmt.Sprintf("Webhook %d delivered", webhook.ID), map[string]any{
-		"webhook_id":  webhook.ID,
-		"url":         webhook.URL,
-		"event":       event,
-		"http_status": resp.StatusCode,
-	})
-	fmt.Printf("webhook delivery webhook_id=%d event=%s status=done http_status=%d url=%s\n", webhook.ID, event, resp.StatusCode, webhook.URL)
 }
 
 // --- shared helpers ---

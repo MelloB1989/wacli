@@ -335,7 +335,7 @@ func cmdMediaDownload(args []string) {
 
 func cmdWebhooks(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli webhooks <list|add|remove>")
+		die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
 	}
 	switch args[0] {
 	case "list":
@@ -350,9 +350,49 @@ func cmdWebhooks(args []string) {
 		cmdWebhooksAdd(args[1:])
 	case "remove", "rm", "delete":
 		cmdWebhooksRemove(args[1:])
+	case "test":
+		cmdWebhooksTest(args[1:])
+	case "replay":
+		cmdWebhooksReplay(args[1:])
 	default:
-		die("usage: wacli webhooks <list|add|remove>")
+		die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
 	}
+}
+
+// cmdWebhooksTest fires a synthetic event so an endpoint can be verified before a real one arrives.
+func cmdWebhooksTest(args []string) {
+	fs := flag.NewFlagSet("webhooks test", flag.ExitOnError)
+	id := fs.Int64("id", 0, "webhook ID")
+	_ = fs.Parse(args)
+	if *id == 0 && fs.NArg() > 0 {
+		*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
+	}
+	if *id == 0 {
+		die("usage: wacli webhooks test <id>")
+	}
+	var response map[string]any
+	if err := callLocalAPI(http.MethodPost, "/webhooks/test", map[string]any{"id": *id}, &response); err != nil {
+		die("webhooks test: %v", err)
+	}
+	prettyPrintJSON(response)
+}
+
+// cmdWebhooksReplay re-sends a delivery that is already on disk.
+func cmdWebhooksReplay(args []string) {
+	fs := flag.NewFlagSet("webhooks replay", flag.ExitOnError)
+	id := fs.Int64("id", 0, "delivery ID, from `wacli webhooks deliveries`")
+	_ = fs.Parse(args)
+	if *id == 0 && fs.NArg() > 0 {
+		*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
+	}
+	if *id == 0 {
+		die("usage: wacli webhooks replay <delivery-id>")
+	}
+	var response map[string]any
+	if err := callLocalAPI(http.MethodPost, "/webhook_deliveries/replay", map[string]any{"id": *id}, &response); err != nil {
+		die("webhooks replay: %v", err)
+	}
+	prettyPrintJSON(response)
 }
 
 func cmdWebhooksAdd(args []string) {

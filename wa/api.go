@@ -718,6 +718,46 @@ func NewHTTPHandler(service *Service) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			ID int64 `json:"id"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		delivery, err := service.TestWebhook(body.ID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": delivery.Status == "delivered", "delivery": delivery})
+	})
+
+	mux.HandleFunc("/webhook_deliveries/replay", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			ID int64 `json:"id"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		delivery, err := service.ReplayDelivery(body.ID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": delivery.Status == "delivered", "delivery": delivery})
+	})
+
 	mux.HandleFunc("/webhooks", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/webhooks" {
 			handleWebhookDetail(service, w, r)

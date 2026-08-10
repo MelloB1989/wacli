@@ -311,3 +311,14 @@ func (c *Client) WebhookDeliveries(ctx context.Context, limit int) (map[string]a
 	}
 	return out, nil
 }
+
+// TestWebhook fires a synthetic event at a subscription, to check reachability and signing without
+// waiting for something real to happen.
+func (c *Client) TestWebhook(ctx context.Context, id int64) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/webhooks/test", map[string]any{"id": id})
+}
+
+// ReplayDelivery re-sends a recorded delivery by ID, body unchanged.
+func (c *Client) ReplayDelivery(ctx context.Context, id int64) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/webhook_deliveries/replay", map[string]any{"id": id})
+}
