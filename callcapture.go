@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -240,12 +241,60 @@ func LoadCaptures(path string) ([]CaptureRecord, error) {
 	return out, nil
 }
 
+// decodeCapturedNode turns a recorded stanza back into a node.
+//
+// It strips a null Content before handing the JSON to whatsmeow. waBinary.Node marshals a
+// content-less node as `"Content":null`, but its UnmarshalJSON only treats *absent* content as
+// empty — a literal null is non-empty and matches neither of the forms it accepts, so it fails with
+// "node content must be an array of nodes or a base64 string". Plenty of real stanzas are
+// content-less (an <ack/>, a bare <offer/>), so without this a capture cannot be read back.
+func decodeCapturedNode(raw json.RawMessage) (waBinary.Node, error) {
+	var node waBinary.Node
+	if err := json.Unmarshal(raw, &node); err == nil {
+		return node, nil
+	}
+
+	// Content-less nodes appear at any depth — a <call> is fine while the <audio/> leaf three levels
+	// down is not — so the whole tree has to be scrubbed, not just the root.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber() // keep attribute numbers as written rather than round-tripping through float64
+	var loose any
+	if err := dec.Decode(&loose); err != nil {
+		return node, err
+	}
+	cleaned, err := json.Marshal(stripNullContent(loose))
+	if err != nil {
+		return node, err
+	}
+	err = json.Unmarshal(cleaned, &node)
+	return node, err
+}
+
+// stripNullContent removes every null Content field in a decoded node tree.
+func stripNullContent(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if k == "Content" && val == nil {
+				delete(t, k)
+				continue
+			}
+			t[k] = stripNullContent(val)
+		}
+	case []any:
+		for i := range t {
+			t[i] = stripNullContent(t[i])
+		}
+	}
+	return v
+}
+
 // DescribeCapture renders one captured stanza as an indented tree, with binary content shown as hex
 // plus an ASCII gloss. This is the view you want when working out what an unknown node means: it
 // makes no assumptions about the protocol and hides nothing.
 func DescribeCapture(rec CaptureRecord) string {
-	var node waBinary.Node
-	if err := json.Unmarshal(rec.Node, &node); err != nil {
+	node, err := decodeCapturedNode(rec.Node)
+	if err != nil {
 		return fmt.Sprintf("%s  %s  <unparseable: %v>", rec.At.Format(time.RFC3339), rec.Direction, err)
 	}
 	var sb strings.Builder

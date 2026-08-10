@@ -6,14 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
-
-	"go.mau.fi/whatsmeow/types"
 )
 
 func newHTTPHandler(service *Service) http.Handler {
@@ -546,53 +543,6 @@ func newHTTPHandler(service *Service) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		info, err := service.EndCall(ctx, body.CallID, body.Reason)
-		if err != nil {
-			writeError(w, callErrorStatus(err), err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
-	})
-
-	mux.HandleFunc("/calls/accept", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeMethodNotAllowed(w)
-			return
-		}
-		var body struct {
-			CallID string `json:"call_id"`
-			// Candidates are the addresses the caller should send media to. A real client always
-			// sends at least one; without them the peer keeps ringing because it has nowhere to go.
-			Candidates []struct {
-				IP       string `json:"ip"`
-				Port     uint16 `json:"port"`
-				Priority int    `json:"priority"`
-			} `json:"candidates"`
-		}
-		if err := decodeJSON(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		// With no call_id, accept whatever is ringing — that is what a caller normally wants.
-		if body.CallID == "" {
-			latest, ok := service.LatestRingingCall()
-			if !ok {
-				writeError(w, http.StatusNotFound, errors.New("no incoming call is ringing"))
-				return
-			}
-			body.CallID = latest.CallID
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		cands := make([]types.CallCandidate, 0, len(body.Candidates))
-		for _, c := range body.Candidates {
-			ip := net.ParseIP(c.IP)
-			if ip == nil {
-				writeError(w, http.StatusBadRequest, fmt.Errorf("bad candidate IP %q", c.IP))
-				return
-			}
-			cands = append(cands, types.CallCandidate{IP: ip, Port: c.Port, Priority: c.Priority})
-		}
-		info, err := service.AcceptIncomingCall(ctx, body.CallID, cands...)
 		if err != nil {
 			writeError(w, callErrorStatus(err), err)
 			return

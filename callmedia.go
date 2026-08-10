@@ -362,4 +362,3 @@ func (s *Service) HangupMedia(callID string) error {
 	}
 	return call.Hangup()
 }
-

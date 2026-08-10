@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	meowcaller "github.com/purpshell/meowcaller"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -28,6 +28,11 @@ const (
 	CallDirectionOut   = "outgoing"
 	CallDirectionIn    = "incoming"
 	defaultRingSeconds = 45
+
+	// Terminate reasons, as WhatsApp spells them on the wire. Defined here rather than taken from
+	// whatsmeow so wacli builds against the upstream module.
+	callReasonHangup  = "hangup"
+	callReasonTimeout = "timeout"
 )
 
 // CallInfo is a single call, incoming or outgoing.
@@ -55,15 +60,15 @@ type CallInfo struct {
 	// Zero on a finished call that had a RecordPath means no inbound audio ever arrived.
 	RecordedSeconds float64 `json:"recorded_seconds"`
 
-	// CallKey is the hex-encoded e2e media master key, when one is known. meowcaller keeps its own
-	// key material for calls it places, so this is only populated for incoming calls.
+	// CallKey is the hex-encoded e2e media master key. Decrypting it out of the offer is not
+	// something upstream whatsmeow does, and the media stack keeps its own key material, so nothing
+	// populates this today; it is kept so the field does not vanish from the API.
 	CallKey string `json:"call_key,omitempty"`
 
 	// creator is the JID that started the call, which is who terminate/reject stanzas must be
 	// addressed to. It's our own JID for outgoing calls.
 	creator types.JID
-	// offer is the original event for incoming calls. AcceptCall needs it: the accept stanza echoes
-	// back the codecs the caller advertised.
+	// offer is the original event for incoming calls, kept for diagnostics.
 	offer *events.CallOffer
 }
 
@@ -349,13 +354,13 @@ func (s *Service) placeNow(
 		ShortID:    shortID,
 		RecordPath: opts.Audio.Record,
 		CallID:     call.ID(),
-		PeerJID:   jid.String(),
-		PeerName:  target.Name,
-		Direction: CallDirectionOut,
-		State:     CallStateRinging,
-		Video:     opts.Video,
-		StartedAt: time.Now(),
-		creator:   ownJID.ToNonAD(),
+		PeerJID:    jid.String(),
+		PeerName:   target.Name,
+		Direction:  CallDirectionOut,
+		State:      CallStateRinging,
+		Video:      opts.Video,
+		StartedAt:  time.Now(),
+		creator:    ownJID.ToNonAD(),
 	}
 	s.queue.hold(call.ID())
 	s.calls.put(info)
@@ -425,7 +430,7 @@ func (s *Service) startRingTimeout(callID string, ringFor time.Duration) {
 			return
 		case <-time.After(ringFor):
 		}
-		if _, err := s.EndCall(context.Background(), callID, string(types.CallTerminateTimeout)); err != nil &&
+		if _, err := s.EndCall(context.Background(), callID, callReasonTimeout); err != nil &&
 			!errors.Is(err, errCallNotActive) {
 			s.log.Warnf("ring timeout for call %s: %v", callID, err)
 		}
@@ -460,9 +465,15 @@ func (s *Service) EndCall(ctx context.Context, ref, reason string) (CallInfo, er
 		return CallInfo{}, errors.New("WhatsApp client is not connected")
 	}
 	if reason == "" {
-		reason = string(types.CallTerminateHangup)
+		reason = callReasonHangup
 	}
-	if err := s.client.TerminateCall(ctx, info.creator, callID, types.CallTerminateReason(reason)); err != nil {
+	// Hang up through the media stack, which owns the call and sends the terminate itself. It also
+	// tears the media down, which a bare signalling terminate would leave running.
+	call, err := s.media.get(callID)
+	if err != nil {
+		return CallInfo{}, fmt.Errorf("end call: %w", err)
+	}
+	if err := call.Hangup(); err != nil {
 		return CallInfo{}, fmt.Errorf("terminate call: %w", err)
 	}
 	ended, _ := s.calls.finish(callID, CallStateEnded, reason)
@@ -502,43 +513,22 @@ func (s *Service) RejectIncomingCall(ctx context.Context, ref string) (CallInfo,
 	return *rejected, nil
 }
 
-// AcceptIncomingCall answers a ringing call so the peer starts expecting media from us.
-//
-// whatsmeow has no media stack of its own, so on its own this leaves the caller hearing silence.
-// It is the signaling half of the media path built in relaysession.go / rtpsend.go.
-func (s *Service) AcceptIncomingCall(ctx context.Context, callID string, candidates ...types.CallCandidate) (CallInfo, error) {
-	info, ok := s.calls.get(callID)
-	if !ok || !info.active() {
-		return CallInfo{}, errCallNotActive
+// offerIsVideo reports whether a call offer advertises video, by looking for a <video> descriptor
+// in the offer node. Read from the node rather than a parsed field so wacli builds against upstream
+// whatsmeow.
+func offerIsVideo(node *waBinary.Node) bool {
+	if node == nil {
+		return false
 	}
-	if info.Direction != CallDirectionIn {
-		return CallInfo{}, errors.New("can only accept incoming calls")
+	for _, child := range node.GetChildren() {
+		if child.Tag == "video" {
+			return true
+		}
+		if offerIsVideo(&child) {
+			return true
+		}
 	}
-	if info.offer == nil {
-		return CallInfo{}, errors.New("no stored offer for that call")
-	}
-	if !s.client.IsConnected() {
-		return CallInfo{}, errors.New("WhatsApp client is not connected")
-	}
-	// Send preaccept first, as a real device does.
-	//
-	// The caller's own stanza handler, read out of its logs, shows it processing
-	// `handleStanza tag=preaccept from=<device>` from a genuine WhatsApp device on this account —
-	// and never logging an `accept` from wacli's device at all. Going straight to accept appears to
-	// leave the caller ringing, so mirror the real sequence: preaccept, then accept.
-	if err := s.client.PreAcceptCall(ctx, info.offer, candidates...); err != nil {
-		s.log.Warnf("preaccept call %s: %v", callID, err)
-	}
-	if err := s.client.AcceptCall(ctx, info.offer, candidates...); err != nil {
-		return CallInfo{}, fmt.Errorf("accept call: %w", err)
-	}
-	accepted, _ := s.calls.setState(callID, CallStateAccepted)
-	if accepted == nil {
-		return *info, nil
-	}
-	s.log.Infof("accepted call %s from %s", callID, info.PeerJID)
-	s.dispatchWebhook("call.accepted", callPayload(*accepted))
-	return *accepted, nil
+	return false
 }
 
 // LatestRingingCall returns the most recent incoming call still ringing, if any.
@@ -570,14 +560,10 @@ func (s *Service) onCallOffer(evt *events.CallOffer) {
 		PeerName:  s.displayNameFor(peer),
 		Direction: CallDirectionIn,
 		State:     CallStateRinging,
-		Video:     evt.Media == types.CallMediaVideo,
+		Video:     offerIsVideo(evt.Data),
 		StartedAt: evt.Timestamp,
 		creator:   evt.CallCreator.ToNonAD(),
 		offer:     evt,
-		// The end-to-end media key, decrypted out of the offer's enc node. This is the key that
-		// protects media between the participants; the relay's hbh_key only covers the
-		// client-to-relay leg, which is why keying SRTP off hbh_key alone never decrypted.
-		CallKey: hex.EncodeToString(evt.CallKey),
 	}
 	if info.StartedAt.IsZero() {
 		info.StartedAt = time.Now()

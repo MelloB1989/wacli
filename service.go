@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
-	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -1100,21 +1100,6 @@ func extractQuotedContent(msg *waE2E.Message) string {
 
 func generatedMediaFilename(prefix, suffix string) string {
 	return fmt.Sprintf("%s_%s%s", prefix, time.Now().UTC().Format("20060102_150405"), suffix)
-}
-
-func normalizeRecipientToJID(recipient string) (types.JID, error) {
-	trimmed := strings.TrimSpace(recipient)
-	if trimmed == "" {
-		return types.JID{}, errors.New("recipient required")
-	}
-	if strings.Contains(trimmed, "@") {
-		return types.ParseJID(trimmed)
-	}
-	phone := normalizePhone(trimmed)
-	if phone == "" {
-		return types.JID{}, errors.New("recipient phone number is empty")
-	}
-	return types.NewJID(phone, types.DefaultUserServer), nil
 }
 
 func mimeTypeFromPath(path string) string {

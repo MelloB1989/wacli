@@ -9,6 +9,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/purpshell/meowcaller v0.0.0-20260726180203-6d9b7b2c1807
+	github.com/rs/zerolog v1.35.1
 	go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933
 	google.golang.org/protobuf v1.36.11
 )
@@ -45,9 +47,7 @@ require (
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/sctp v1.9.4 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/purpshell/meowcaller v0.0.0-20260726180203-6d9b7b2c1807 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.33 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
@@ -61,12 +61,3 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
-
-// wacli's calling depends on call APIs (AcceptCall, TerminateCall, CallCandidate,
-// CallTerminateReason, CallOffer.Media) that are not in upstream whatsmeow, so the build needs a
-// whatsmeow checkout carrying them cloned alongside this repo:
-//
-//	git clone https://github.com/tulir/whatsmeow ../whatsmeow
-//
-// The path is relative so it resolves for any checkout, not just the machine it was authored on.
-replace go.mau.fi/whatsmeow => ../whatsmeow

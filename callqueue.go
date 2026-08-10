@@ -30,11 +30,11 @@ type callQueue struct {
 
 // queuedCall is a call waiting for the slot.
 type queuedCall struct {
-	shortID   string
-	target    ResolvedTarget
-	jid       types.JID
-	opts      PlaceCallOptions
-	enqueued  time.Time
+	shortID    string
+	target     ResolvedTarget
+	jid        types.JID
+	opts       PlaceCallOptions
+	enqueued   time.Time
 	registryID string // synthetic registry key while it has no real call ID
 }
 

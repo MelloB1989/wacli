@@ -839,7 +839,9 @@ func (s *Store) ConfigureInitialAccess(unlockedJIDs []string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// Rollback is a no-op once the tx has committed; the error is intentionally discarded because
+	// there is nothing useful to do with it on the deferred path.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`UPDATE chats SET locked = 1`); err != nil {
 		return err
