@@ -11,6 +11,7 @@ import (
 var (
 	dataDir       string
 	mediaDir      string
+	capturePath   string
 	sessionDBPath string
 	appDBPath     string
 	qrPath        string
@@ -26,6 +27,8 @@ func init() {
 	}
 	dataDir = filepath.Join(home, ".wacli")
 	mediaDir = filepath.Join(dataDir, "media")
+	// capturePath holds raw call signaling stanzas when call capture is enabled. See callcapture.go.
+	capturePath = filepath.Join(dataDir, captureFileName)
 	sessionDBPath = filepath.Join(dataDir, "session.db")
 	appDBPath = filepath.Join(dataDir, "state.db")
 	qrPath = filepath.Join(dataDir, "qr.png")
