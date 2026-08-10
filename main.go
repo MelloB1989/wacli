@@ -77,6 +77,10 @@ func main() {
 		cmdContacts(os.Args[2:])
 	case "webhooks":
 		cmdWebhooks(os.Args[2:])
+	case "groups", "group":
+		cmdGroups(os.Args[2:])
+	case "check":
+		cmdCheckNumbers(os.Args[2:])
 	case "triggers", "trigger":
 		cmdTriggers(os.Args[2:])
 	case "auto-replies", "autoreplies":
@@ -1204,6 +1208,14 @@ AI-facing HTTP API:
   DELETE /webhooks/{id}
   POST   /webhooks/test
   POST   /webhook_deliveries/replay
+  GET    /groups
+  POST   /groups
+  POST   /groups/participants
+  POST   /groups/update
+  GET    /groups/invite
+  POST   /groups/invite
+  POST   /presence
+  POST   /contacts/check
   GET    /webhook_deliveries
   GET    /auto_replies
   POST   /auto_replies

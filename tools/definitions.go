@@ -18,6 +18,8 @@ func All(t *Tools) []ai.GoFunctionTool {
 	out = append(out, t.ChatTools()...)
 	out = append(out, t.CallTools()...)
 	out = append(out, t.TriggerTools()...)
+	out = append(out, t.GroupTools()...)
+	out = append(out, t.PresenceTools()...)
 	out = append(out, t.WebhookTools()...)
 	out = append(out, t.SystemTools()...)
 	return out

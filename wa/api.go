@@ -718,6 +718,195 @@ func NewHTTPHandler(service *Service) http.Handler {
 		}
 	})
 
+	mux.HandleFunc("/groups", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		switch r.Method {
+		case http.MethodGet:
+			if ref := strings.TrimSpace(r.URL.Query().Get("ref")); ref != "" {
+				group, err := service.GroupInfo(ctx, ref)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"group": group})
+				return
+			}
+			groups, err := service.ListGroups(ctx)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+		case http.MethodPost:
+			var body struct {
+				Name         string   `json:"name"`
+				Participants []string `json:"participants"`
+			}
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			group, err := service.CreateGroup(ctx, body.Name, body.Participants)
+			if err != nil {
+				writeError(w, automationStatus(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "group": group})
+		default:
+			writeMethodNotAllowed(w)
+		}
+	})
+
+	mux.HandleFunc("/groups/participants", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Group        string   `json:"group"`
+			Action       string   `json:"action"`
+			Participants []string `json:"participants"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		result, err := service.UpdateGroupParticipants(ctx, body.Group, body.Action, body.Participants)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "participants": result})
+	})
+
+	mux.HandleFunc("/groups/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Group string `json:"group"`
+			Name  string `json:"name,omitempty"`
+			Topic string `json:"topic,omitempty"`
+			Leave bool   `json:"leave,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		var err error
+		switch {
+		case body.Leave:
+			err = service.LeaveGroup(ctx, body.Group)
+		case body.Name != "":
+			err = service.SetGroupName(ctx, body.Group, body.Name)
+		case body.Topic != "":
+			err = service.SetGroupTopic(ctx, body.Group, body.Topic)
+		default:
+			err = errors.New("provide name, topic, or leave")
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "group": body.Group})
+	})
+
+	mux.HandleFunc("/groups/invite", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		switch r.Method {
+		case http.MethodGet:
+			link, err := service.GroupInviteLink(ctx, r.URL.Query().Get("group"),
+				r.URL.Query().Get("reset") == "true")
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"invite_link": link})
+		case http.MethodPost:
+			var body struct {
+				Link    string `json:"link"`
+				Preview bool   `json:"preview,omitempty"`
+			}
+			if err := decodeJSON(r, &body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			var group GroupSummary
+			var err error
+			if body.Preview {
+				group, err = service.GroupInfoFromLink(ctx, body.Link)
+			} else {
+				group, err = service.JoinGroupWithLink(ctx, body.Link)
+			}
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "group": group})
+		default:
+			writeMethodNotAllowed(w)
+		}
+	})
+
+	mux.HandleFunc("/presence", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Chat      string `json:"chat,omitempty"`
+			Typing    bool   `json:"typing,omitempty"`
+			Recording bool   `json:"recording,omitempty"`
+			Available *bool  `json:"available,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		var err error
+		if body.Available != nil {
+			err = service.SetPresence(ctx, *body.Available)
+		} else {
+			err = service.SetTyping(ctx, body.Chat, body.Typing, body.Recording)
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
+	mux.HandleFunc("/contacts/check", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Phones []string `json:"phones"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		results, err := service.CheckOnWhatsApp(ctx, body.Phones)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": results})
+	})
+
 	mux.HandleFunc("/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w)

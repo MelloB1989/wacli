@@ -79,7 +79,8 @@ func TestAllToolsAreWellFormed(t *testing.T) {
 func TestAllCoversEveryGroup(t *testing.T) {
 	tl := New("")
 	sum := len(tl.MessagingTools()) + len(tl.ChatTools()) + len(tl.CallTools()) +
-		len(tl.TriggerTools()) + len(tl.WebhookTools()) + len(tl.SystemTools())
+		len(tl.TriggerTools()) + len(tl.WebhookTools()) + len(tl.SystemTools()) +
+		len(tl.GroupTools()) + len(tl.PresenceTools())
 	if got := len(All(tl)); got != sum {
 		t.Errorf("All() returned %d tools, groups sum to %d", got, sum)
 	}

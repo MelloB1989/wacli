@@ -322,3 +322,82 @@ func (c *Client) TestWebhook(ctx context.Context, id int64) (map[string]any, err
 func (c *Client) ReplayDelivery(ctx context.Context, id int64) (map[string]any, error) {
 	return c.Raw(ctx, http.MethodPost, "/webhook_deliveries/replay", map[string]any{"id": id})
 }
+
+// --- groups, presence, reachability ---
+
+// ListGroups returns every group this account belongs to.
+func (c *Client) ListGroups(ctx context.Context) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodGet, "/groups", nil)
+}
+
+// GroupInfo returns one group with its participants.
+func (c *Client) GroupInfo(ctx context.Context, ref string) (map[string]any, error) {
+	q := url.Values{"ref": {ref}}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, "/groups", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CreateGroup creates a group with the given members.
+func (c *Client) CreateGroup(ctx context.Context, name string, participants []string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups",
+		map[string]any{"name": name, "participants": participants})
+}
+
+// UpdateGroupParticipants adds, removes, promotes or demotes members.
+func (c *Client) UpdateGroupParticipants(ctx context.Context, group, action string, participants []string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups/participants",
+		map[string]any{"group": group, "action": action, "participants": participants})
+}
+
+// SetGroupName renames a group.
+func (c *Client) SetGroupName(ctx context.Context, group, name string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups/update", map[string]any{"group": group, "name": name})
+}
+
+// SetGroupTopic sets a group's description.
+func (c *Client) SetGroupTopic(ctx context.Context, group, topic string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups/update", map[string]any{"group": group, "topic": topic})
+}
+
+// LeaveGroup leaves a group.
+func (c *Client) LeaveGroup(ctx context.Context, group string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups/update", map[string]any{"group": group, "leave": true})
+}
+
+// GroupInviteLink returns a group's invite link, optionally revoking the previous one.
+func (c *Client) GroupInviteLink(ctx context.Context, group string, reset bool) (map[string]any, error) {
+	q := url.Values{"group": {group}}
+	if reset {
+		q.Set("reset", "true")
+	}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, "/groups/invite", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// JoinGroup joins a group from an invite link, or previews it without joining.
+func (c *Client) JoinGroup(ctx context.Context, link string, preview bool) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/groups/invite",
+		map[string]any{"link": link, "preview": preview})
+}
+
+// SetTyping shows or clears the typing indicator in a chat.
+func (c *Client) SetTyping(ctx context.Context, chat string, typing, recording bool) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/presence",
+		map[string]any{"chat": chat, "typing": typing, "recording": recording})
+}
+
+// SetPresence announces this account as available or unavailable.
+func (c *Client) SetPresence(ctx context.Context, available bool) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/presence", map[string]any{"available": available})
+}
+
+// CheckOnWhatsApp reports which phone numbers are reachable on WhatsApp.
+func (c *Client) CheckOnWhatsApp(ctx context.Context, phones []string) (map[string]any, error) {
+	return c.Raw(ctx, http.MethodPost, "/contacts/check", map[string]any{"phones": phones})
+}

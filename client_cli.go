@@ -726,3 +726,157 @@ func decodeArbitraryJSON(data []byte) (any, error) {
 	}
 	return body, nil
 }
+
+// cmdGroups manages WhatsApp groups.
+func cmdGroups(args []string) {
+	sub := "list"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "list":
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, "/groups", nil, &response); err != nil {
+			die("groups: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "info":
+		fs := flag.NewFlagSet("groups info", flag.ExitOnError)
+		group := fs.String("group", "", "group JID or name")
+		_ = fs.Parse(args)
+		if *group == "" && fs.NArg() > 0 {
+			*group = fs.Arg(0)
+		}
+		if *group == "" {
+			die("usage: wacli groups info <group>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, "/groups?ref="+url.QueryEscape(*group), nil, &response); err != nil {
+			die("groups info: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "create":
+		fs := flag.NewFlagSet("groups create", flag.ExitOnError)
+		name := fs.String("name", "", "group name")
+		members := fs.String("members", "", "comma-separated phones, JIDs or contact names")
+		_ = fs.Parse(args)
+		if *name == "" || *members == "" {
+			die("usage: wacli groups create --name <name> --members <a,b,c>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/groups",
+			map[string]any{"name": *name, "participants": splitCommaList(*members)}, &response); err != nil {
+			die("groups create: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "add", "remove", "promote", "demote":
+		fs := flag.NewFlagSet("groups "+sub, flag.ExitOnError)
+		group := fs.String("group", "", "group JID or name")
+		members := fs.String("members", "", "comma-separated participants")
+		_ = fs.Parse(args)
+		if *group == "" || *members == "" {
+			die("usage: wacli groups %s --group <group> --members <a,b>", sub)
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/groups/participants", map[string]any{
+			"group": *group, "action": sub, "participants": splitCommaList(*members),
+		}, &response); err != nil {
+			die("groups %s: %v", sub, err)
+		}
+		prettyPrintJSON(response)
+	case "rename":
+		fs := flag.NewFlagSet("groups rename", flag.ExitOnError)
+		group := fs.String("group", "", "group JID or name")
+		name := fs.String("name", "", "new name")
+		topic := fs.String("topic", "", "new topic/description")
+		_ = fs.Parse(args)
+		if *group == "" || (*name == "" && *topic == "") {
+			die("usage: wacli groups rename --group <group> [--name <name>] [--topic <topic>]")
+		}
+		body := map[string]any{"group": *group}
+		if *name != "" {
+			body["name"] = *name
+		} else {
+			body["topic"] = *topic
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/groups/update", body, &response); err != nil {
+			die("groups rename: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "invite":
+		fs := flag.NewFlagSet("groups invite", flag.ExitOnError)
+		group := fs.String("group", "", "group JID or name")
+		reset := fs.Bool("reset", false, "revoke the old link and issue a new one")
+		_ = fs.Parse(args)
+		if *group == "" && fs.NArg() > 0 {
+			*group = fs.Arg(0)
+		}
+		if *group == "" {
+			die("usage: wacli groups invite <group> [--reset]")
+		}
+		q := "/groups/invite?group=" + url.QueryEscape(*group)
+		if *reset {
+			q += "&reset=true"
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodGet, q, nil, &response); err != nil {
+			die("groups invite: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "join":
+		fs := flag.NewFlagSet("groups join", flag.ExitOnError)
+		link := fs.String("link", "", "invite link or code")
+		preview := fs.Bool("preview", false, "look without joining")
+		_ = fs.Parse(args)
+		if *link == "" && fs.NArg() > 0 {
+			*link = fs.Arg(0)
+		}
+		if *link == "" {
+			die("usage: wacli groups join <link> [--preview]")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/groups/invite",
+			map[string]any{"link": *link, "preview": *preview}, &response); err != nil {
+			die("groups join: %v", err)
+		}
+		prettyPrintJSON(response)
+	case "leave":
+		fs := flag.NewFlagSet("groups leave", flag.ExitOnError)
+		group := fs.String("group", "", "group JID or name")
+		_ = fs.Parse(args)
+		if *group == "" && fs.NArg() > 0 {
+			*group = fs.Arg(0)
+		}
+		if *group == "" {
+			die("usage: wacli groups leave <group>")
+		}
+		var response map[string]any
+		if err := callLocalAPI(http.MethodPost, "/groups/update",
+			map[string]any{"group": *group, "leave": true}, &response); err != nil {
+			die("groups leave: %v", err)
+		}
+		prettyPrintJSON(response)
+	default:
+		die("unknown groups subcommand %q (want: list, info, create, add, remove, promote, demote, rename, invite, join, leave)", sub)
+	}
+}
+
+// cmdCheckNumbers reports which phone numbers have WhatsApp.
+func cmdCheckNumbers(args []string) {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	phones := fs.String("phones", "", "comma-separated phone numbers")
+	_ = fs.Parse(args)
+	list := splitCommaList(*phones)
+	if len(list) == 0 {
+		list = fs.Args()
+	}
+	if len(list) == 0 {
+		die("usage: wacli check +15551234567,+15559876543")
+	}
+	var response map[string]any
+	if err := callLocalAPI(http.MethodPost, "/contacts/check", map[string]any{"phones": list}, &response); err != nil {
+		die("check: %v", err)
+	}
+	prettyPrintJSON(response)
+}
