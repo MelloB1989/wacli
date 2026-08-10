@@ -745,64 +745,6 @@ func (s *Service) onLiveMessage(evt *events.Message) {
 	go s.triggerEventForMessage(EventIncomingMessage, chat, record)
 }
 
-func (s *Service) maybeSendAutoReply(chat ChatRecord, incoming MessageRecord) {
-	rules, err := s.store.ListAutoReplies()
-	if err != nil {
-		s.log.Warnf("list auto replies: %v", err)
-		return
-	}
-	for _, rule := range rules {
-		if !rule.Enabled {
-			continue
-		}
-		if chat.IsGroup && !rule.ApplyToGroups {
-			continue
-		}
-		if !chat.IsGroup && !rule.ApplyToDMs {
-			continue
-		}
-		if !autoReplyMatches(rule, incoming.Content) {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		record, err := s.sendMessageDirect(ctx, mustParseJID(chat.JID), rule.ReplyText, rule.MediaPath, false, "")
-		cancel()
-		if err != nil {
-			s.log.Warnf("send auto reply to %s: %v", chat.JID, err)
-			return
-		}
-		payload := s.buildMessageWebhookPayload(chat, record, "auto_reply")
-		payload["trigger_message"] = incoming
-		payload["reply_rule"] = rule
-		payload["reply_message"] = record
-		s.dispatchWebhook("auto_reply_sent", payload)
-		return
-	}
-}
-
-func autoReplyMatches(rule AutoReplyRule, text string) bool {
-	switch strings.ToLower(strings.TrimSpace(rule.MatchType)) {
-	case "always":
-		return true
-	case "exact":
-		return strings.EqualFold(strings.TrimSpace(text), strings.TrimSpace(rule.Pattern))
-	case "contains":
-		return strings.Contains(strings.ToLower(text), strings.ToLower(rule.Pattern))
-	case "prefix":
-		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), strings.ToLower(strings.TrimSpace(rule.Pattern)))
-	case "suffix":
-		return strings.HasSuffix(strings.ToLower(strings.TrimSpace(text)), strings.ToLower(strings.TrimSpace(rule.Pattern)))
-	case "regex":
-		re, err := regexp.Compile(rule.Pattern)
-		if err != nil {
-			return false
-		}
-		return re.MatchString(text)
-	default:
-		return false
-	}
-}
-
 func mustParseJID(jid string) types.JID {
 	parsed, _ := types.ParseJID(jid)
 	return parsed
