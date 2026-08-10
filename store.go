@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -17,7 +16,6 @@ const (
 	settingDNDMode                 = "dnd_mode"
 	settingInitialAccessConfigured = "initial_access_configured"
 	settingLastHistorySync         = "last_history_sync"
-	settingAssistantSettings       = "assistant_settings"
 )
 
 type Store struct {
@@ -106,27 +104,6 @@ type WebhookRecord struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-type OpenClawBridgeRecord struct {
-	ID           int64     `json:"id"`
-	Command      string    `json:"command"`
-	Scope        string    `json:"scope"`
-	ChatJIDs     []string  `json:"chat_jids,omitempty"`
-	MessageTypes []string  `json:"message_types,omitempty"`
-	ContextLimit int       `json:"context_limit"`
-	Instruction  string    `json:"instruction"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-type OpenClawSessionRecord struct {
-	ChatJID   string    `json:"chat_jid"`
-	ChatName  string    `json:"chat_name,omitempty"`
-	SessionID string    `json:"session_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 type WebhookDeliveryRecord struct {
 	ID           int64     `json:"id"`
 	WebhookID    int64     `json:"webhook_id"`
@@ -141,21 +118,6 @@ type WebhookDeliveryRecord struct {
 	RequestBody  string    `json:"request_body,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-type OpenClawDeliveryRecord struct {
-	BridgeID       int64     `json:"bridge_id"`
-	ChatJID        string    `json:"chat_jid"`
-	ChatName       string    `json:"chat_name,omitempty"`
-	MessageID      string    `json:"message_id"`
-	SessionID      string    `json:"session_id"`
-	Command        string    `json:"command,omitempty"`
-	Status         string    `json:"status"`
-	LastError      string    `json:"last_error,omitempty"`
-	RequestMessage string    `json:"request_message,omitempty"`
-	ResponseOutput string    `json:"response_output,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type AutoReplyRule struct {
@@ -180,21 +142,6 @@ type AppLogRecord struct {
 	Message     string    `json:"message"`
 	DetailsJSON string    `json:"details_json,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
-}
-
-type AssistantSettings struct {
-	AssistantName    string `json:"assistant_name"`
-	Personality      string `json:"personality"`
-	Behavior         string `json:"behavior"`
-	ReplyStyle       string `json:"reply_style"`
-	ReplyInstruction string `json:"reply_instruction"`
-	PreferredRuntime string `json:"preferred_runtime"`
-	CodexModel       string `json:"codex_model"`
-	ClaudeModel      string `json:"claude_model"`
-	OpenClawCommand  string `json:"openclaw_command"`
-	KarmaProvider    string `json:"karma_provider"`
-	KarmaModel       string `json:"karma_model"`
-	KarmaAPIKey      string `json:"karma_api_key,omitempty"`
 }
 
 type StatusSnapshot struct {
@@ -315,42 +262,8 @@ CREATE TABLE IF NOT EXISTS webhooks (
 	updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS openclaw_bridges (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	command TEXT NOT NULL DEFAULT 'openclaw',
-	scope TEXT NOT NULL DEFAULT 'all_unlocked',
-	chat_jids TEXT NOT NULL DEFAULT '[]',
-	message_types TEXT NOT NULL DEFAULT '["*"]',
-	context_limit INTEGER NOT NULL DEFAULT 12,
-	instruction TEXT NOT NULL DEFAULT '',
-	enabled INTEGER NOT NULL DEFAULT 1,
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS openclaw_sessions (
-	chat_jid TEXT PRIMARY KEY,
-	session_id TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS openclaw_deliveries (
-	bridge_id INTEGER NOT NULL,
-	chat_jid TEXT NOT NULL,
-	message_id TEXT NOT NULL,
-	session_id TEXT NOT NULL DEFAULT '',
-	command TEXT NOT NULL DEFAULT '',
-	request_message TEXT NOT NULL DEFAULT '',
-	response_output TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL DEFAULT 'pending',
-	last_error TEXT NOT NULL DEFAULT '',
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL,
-	PRIMARY KEY (bridge_id, chat_jid, message_id),
-	FOREIGN KEY(bridge_id) REFERENCES openclaw_bridges(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_openclaw_deliveries_status ON openclaw_deliveries(status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -413,9 +326,6 @@ CREATE INDEX IF NOT EXISTS idx_message_receipts_msg ON message_receipts(message_
 	if err := s.ensureWebhookSchema(); err != nil {
 		return err
 	}
-	if err := s.ensureOpenClawDeliverySchema(); err != nil {
-		return err
-	}
 	if err := s.ensureMessageSchema(); err != nil {
 		return err
 	}
@@ -424,9 +334,6 @@ CREATE INDEX IF NOT EXISTS idx_message_receipts_msg ON message_receipts(message_
 		return err
 	}
 	if err := s.ensureSettingDefault(settingInitialAccessConfigured, "false"); err != nil {
-		return err
-	}
-	if err := s.ensureSettingDefault(settingAssistantSettings, "{}"); err != nil {
 		return err
 	}
 	return nil
@@ -445,23 +352,6 @@ func (s *Store) ensureWebhookSchema() error {
 	}
 	for _, column := range columns {
 		if err := s.ensureTableColumn("webhooks", column.name, column.ddl); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) ensureOpenClawDeliverySchema() error {
-	columns := []struct {
-		name string
-		ddl  string
-	}{
-		{name: "command", ddl: "TEXT NOT NULL DEFAULT ''"},
-		{name: "request_message", ddl: "TEXT NOT NULL DEFAULT ''"},
-		{name: "response_output", ddl: "TEXT NOT NULL DEFAULT ''"},
-	}
-	for _, column := range columns {
-		if err := s.ensureTableColumn("openclaw_deliveries", column.name, column.ddl); err != nil {
 			return err
 		}
 	}
@@ -871,74 +761,6 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated
 	}
 	return s.AddAppLog("info", "access", fmt.Sprintf("Initial access configured with %d unlocked chats", len(unlockedJIDs)), map[string]any{
 		"unlocked_jids": unlockedJIDs,
-	})
-}
-
-func defaultAssistantSettings() AssistantSettings {
-	return AssistantSettings{
-		AssistantName:    "WACLI",
-		PreferredRuntime: "openclaw",
-		CodexModel:       "openai-codex/gpt-5.4",
-		ClaudeModel:      "claude-sonnet-4-6",
-		OpenClawCommand:  "openclaw",
-		KarmaProvider:    "openai",
-		KarmaModel:       "gpt-4.1-mini",
-	}
-}
-
-func (s *Store) GetAssistantSettings() (AssistantSettings, error) {
-	settings := defaultAssistantSettings()
-	raw, err := s.getSetting(settingAssistantSettings)
-	if err != nil {
-		return settings, err
-	}
-	if strings.TrimSpace(raw) == "" {
-		return settings, nil
-	}
-	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
-		return defaultAssistantSettings(), nil
-	}
-	if strings.TrimSpace(settings.AssistantName) == "" {
-		settings.AssistantName = "WACLI"
-	}
-	if strings.TrimSpace(settings.PreferredRuntime) == "" {
-		settings.PreferredRuntime = "openclaw"
-	}
-	if strings.TrimSpace(settings.CodexModel) == "" {
-		settings.CodexModel = "openai-codex/gpt-5.4"
-	}
-	if strings.TrimSpace(settings.ClaudeModel) == "" {
-		settings.ClaudeModel = "claude-sonnet-4-6"
-	}
-	if strings.TrimSpace(settings.OpenClawCommand) == "" {
-		settings.OpenClawCommand = "openclaw"
-	}
-	if strings.TrimSpace(settings.KarmaProvider) == "" {
-		settings.KarmaProvider = "openai"
-	}
-	if strings.TrimSpace(settings.KarmaModel) == "" {
-		settings.KarmaModel = "gpt-4.1-mini"
-	}
-	return settings, nil
-}
-
-func (s *Store) PutAssistantSettings(settings AssistantSettings) error {
-	if strings.TrimSpace(settings.AssistantName) == "" {
-		settings.AssistantName = "WACLI"
-	}
-	if strings.TrimSpace(settings.PreferredRuntime) == "" {
-		settings.PreferredRuntime = "openclaw"
-	}
-	payload, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	if err := s.setSetting(settingAssistantSettings, string(payload)); err != nil {
-		return err
-	}
-	return s.AddAppLog("info", "assistant", "Assistant settings updated", map[string]any{
-		"preferred_runtime": settings.PreferredRuntime,
-		"assistant_name":    settings.AssistantName,
 	})
 }
 
@@ -1524,282 +1346,6 @@ FROM webhook_deliveries
 	return records, rows.Err()
 }
 
-func (s *Store) AddOpenClawBridge(record OpenClawBridgeRecord) (OpenClawBridgeRecord, error) {
-	record, err := normalizeOpenClawBridgeRecord(record)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	chatJIDsJSON, err := json.Marshal(record.ChatJIDs)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	messageTypesJSON, err := json.Marshal(record.MessageTypes)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	now := time.Now()
-	result, err := s.db.Exec(`
-INSERT INTO openclaw_bridges (command, scope, chat_jids, message_types, context_limit, instruction, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, record.Command, record.Scope, string(chatJIDsJSON), string(messageTypesJSON), record.ContextLimit, record.Instruction, boolToInt(record.Enabled), now.Unix(), now.Unix())
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	record.ID = id
-	record.CreatedAt = now
-	record.UpdatedAt = now
-	return record, nil
-}
-
-func (s *Store) GetOpenClawBridge(id int64) (OpenClawBridgeRecord, error) {
-	row := s.db.QueryRow(`
-SELECT id, command, scope, chat_jids, message_types, context_limit, instruction, enabled, created_at, updated_at
-FROM openclaw_bridges
-WHERE id = ?
-`, id)
-	return scanOpenClawBridge(row)
-}
-
-func (s *Store) UpdateOpenClawBridge(record OpenClawBridgeRecord) (OpenClawBridgeRecord, error) {
-	if record.ID <= 0 {
-		return OpenClawBridgeRecord{}, errors.New("openclaw bridge id required")
-	}
-	record, err := normalizeOpenClawBridgeRecord(record)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	chatJIDsJSON, err := json.Marshal(record.ChatJIDs)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	messageTypesJSON, err := json.Marshal(record.MessageTypes)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	now := time.Now()
-	result, err := s.db.Exec(`
-UPDATE openclaw_bridges
-SET command = ?, scope = ?, chat_jids = ?, message_types = ?, context_limit = ?, instruction = ?, enabled = ?, updated_at = ?
-WHERE id = ?
-`, record.Command, record.Scope, string(chatJIDsJSON), string(messageTypesJSON), record.ContextLimit, record.Instruction, boolToInt(record.Enabled), now.Unix(), record.ID)
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	if rows == 0 {
-		return OpenClawBridgeRecord{}, sql.ErrNoRows
-	}
-	return s.GetOpenClawBridge(record.ID)
-}
-
-func (s *Store) ListOpenClawBridges() ([]OpenClawBridgeRecord, error) {
-	rows, err := s.db.Query(`
-SELECT id, command, scope, chat_jids, message_types, context_limit, instruction, enabled, created_at, updated_at
-FROM openclaw_bridges
-ORDER BY id ASC
-`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []OpenClawBridgeRecord
-	for rows.Next() {
-		record, err := scanOpenClawBridge(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, rows.Err()
-}
-
-func scanOpenClawBridge(scanner interface {
-	Scan(dest ...any) error
-}) (OpenClawBridgeRecord, error) {
-	var record OpenClawBridgeRecord
-	var chatJIDsJSON, messageTypesJSON string
-	var enabled int
-	var createdAt, updatedAt int64
-	if err := scanner.Scan(&record.ID, &record.Command, &record.Scope, &chatJIDsJSON, &messageTypesJSON, &record.ContextLimit, &record.Instruction, &enabled, &createdAt, &updatedAt); err != nil {
-		return OpenClawBridgeRecord{}, err
-	}
-	record.Enabled = intToBool(enabled)
-	record.CreatedAt = time.Unix(createdAt, 0)
-	record.UpdatedAt = time.Unix(updatedAt, 0)
-	if err := json.Unmarshal([]byte(chatJIDsJSON), &record.ChatJIDs); err != nil {
-		record.ChatJIDs = []string{}
-	}
-	if err := json.Unmarshal([]byte(messageTypesJSON), &record.MessageTypes); err != nil {
-		record.MessageTypes = []string{"*"}
-	}
-	return normalizeOpenClawBridgeRecord(record)
-}
-
-func (s *Store) DeleteOpenClawBridge(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM openclaw_bridges WHERE id = ?`, id)
-	return err
-}
-
-func (s *Store) GetOrCreateOpenClawSession(chatJID string) (OpenClawSessionRecord, error) {
-	chatJID = strings.TrimSpace(chatJID)
-	if chatJID == "" {
-		return OpenClawSessionRecord{}, errors.New("chat_jid required")
-	}
-	if session, err := s.GetOpenClawSession(chatJID); err == nil {
-		_, _ = s.db.Exec(`UPDATE openclaw_sessions SET updated_at = ? WHERE chat_jid = ?`, time.Now().Unix(), chatJID)
-		session.UpdatedAt = time.Now()
-		return session, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return OpenClawSessionRecord{}, err
-	}
-	now := time.Now()
-	sessionID := uuid.NewString()
-	_, err := s.db.Exec(`
-INSERT INTO openclaw_sessions (chat_jid, session_id, created_at, updated_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(chat_jid) DO NOTHING
-`, chatJID, sessionID, now.Unix(), now.Unix())
-	if err != nil {
-		return OpenClawSessionRecord{}, err
-	}
-	return s.GetOpenClawSession(chatJID)
-}
-
-func (s *Store) GetOpenClawSession(chatJID string) (OpenClawSessionRecord, error) {
-	var record OpenClawSessionRecord
-	var createdAt, updatedAt int64
-	err := s.db.QueryRow(`
-SELECT s.chat_jid, COALESCE(c.name, ''), s.session_id, s.created_at, s.updated_at
-FROM openclaw_sessions s
-LEFT JOIN chats c ON c.jid = s.chat_jid
-WHERE s.chat_jid = ?
-`, chatJID).Scan(&record.ChatJID, &record.ChatName, &record.SessionID, &createdAt, &updatedAt)
-	if err != nil {
-		return OpenClawSessionRecord{}, err
-	}
-	record.CreatedAt = time.Unix(createdAt, 0)
-	record.UpdatedAt = time.Unix(updatedAt, 0)
-	return record, nil
-}
-
-func (s *Store) ListOpenClawSessions(limit int, query string) ([]OpenClawSessionRecord, error) {
-	base := `
-SELECT s.chat_jid, COALESCE(c.name, ''), s.session_id, s.created_at, s.updated_at
-FROM openclaw_sessions s
-LEFT JOIN chats c ON c.jid = s.chat_jid
-`
-	var args []any
-	if trimmed := strings.TrimSpace(query); trimmed != "" {
-		base += ` WHERE LOWER(s.chat_jid) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ? OR LOWER(s.session_id) LIKE ?`
-		needle := "%" + strings.ToLower(trimmed) + "%"
-		args = append(args, needle, needle, needle)
-	}
-	base += ` ORDER BY s.updated_at DESC`
-	if limit > 0 {
-		base += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	rows, err := s.db.Query(base, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []OpenClawSessionRecord
-	for rows.Next() {
-		var record OpenClawSessionRecord
-		var createdAt, updatedAt int64
-		if err := rows.Scan(&record.ChatJID, &record.ChatName, &record.SessionID, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		record.CreatedAt = time.Unix(createdAt, 0)
-		record.UpdatedAt = time.Unix(updatedAt, 0)
-		records = append(records, record)
-	}
-	return records, rows.Err()
-}
-
-func (s *Store) TryStartOpenClawDelivery(bridgeID int64, chatJID, messageID, sessionID, command, requestMessage string) (bool, error) {
-	now := time.Now()
-	result, err := s.db.Exec(`
-INSERT OR IGNORE INTO openclaw_deliveries (bridge_id, chat_jid, message_id, session_id, command, request_message, response_output, status, last_error, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, '', 'pending', '', ?, ?)
-`, bridgeID, chatJID, messageID, sessionID, strings.TrimSpace(command), truncateString(requestMessage, 32000), now.Unix(), now.Unix())
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows > 0, nil
-}
-
-func (s *Store) FinishOpenClawDelivery(bridgeID int64, chatJID, messageID, status, lastError, responseOutput string) error {
-	if strings.TrimSpace(status) == "" {
-		status = "done"
-	}
-	_, err := s.db.Exec(`
-UPDATE openclaw_deliveries
-SET status = ?, last_error = ?, response_output = ?, updated_at = ?
-WHERE bridge_id = ? AND chat_jid = ? AND message_id = ?
-`, status, truncateString(lastError, 4000), truncateString(responseOutput, 16000), time.Now().Unix(), bridgeID, chatJID, messageID)
-	return err
-}
-
-func (s *Store) ListOpenClawDeliveries(limit int, status, query string) ([]OpenClawDeliveryRecord, error) {
-	base := `
-SELECT d.bridge_id, d.chat_jid, COALESCE(c.name, ''), d.message_id, d.session_id, d.command, d.status, d.last_error, d.request_message, d.response_output, d.created_at, d.updated_at
-FROM openclaw_deliveries d
-LEFT JOIN chats c ON c.jid = d.chat_jid
-`
-	var args []any
-	var clauses []string
-	if trimmed := strings.TrimSpace(status); trimmed != "" {
-		clauses = append(clauses, "LOWER(d.status) = ?")
-		args = append(args, strings.ToLower(trimmed))
-	}
-	if trimmed := strings.TrimSpace(query); trimmed != "" {
-		needle := "%" + strings.ToLower(trimmed) + "%"
-		clauses = append(clauses, "(LOWER(d.chat_jid) LIKE ? OR LOWER(COALESCE(c.name, '')) LIKE ? OR LOWER(d.message_id) LIKE ? OR LOWER(d.session_id) LIKE ? OR LOWER(d.last_error) LIKE ? OR LOWER(d.response_output) LIKE ?)")
-		args = append(args, needle, needle, needle, needle, needle, needle)
-	}
-	if len(clauses) > 0 {
-		base += " WHERE " + strings.Join(clauses, " AND ")
-	}
-	base += " ORDER BY d.updated_at DESC, d.created_at DESC"
-	if limit > 0 {
-		base += " LIMIT ?"
-		args = append(args, limit)
-	}
-	rows, err := s.db.Query(base, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []OpenClawDeliveryRecord
-	for rows.Next() {
-		var record OpenClawDeliveryRecord
-		var createdAt, updatedAt int64
-		if err := rows.Scan(&record.BridgeID, &record.ChatJID, &record.ChatName, &record.MessageID, &record.SessionID, &record.Command, &record.Status, &record.LastError, &record.RequestMessage, &record.ResponseOutput, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		record.CreatedAt = time.Unix(createdAt, 0)
-		record.UpdatedAt = time.Unix(updatedAt, 0)
-		records = append(records, record)
-	}
-	return records, rows.Err()
-}
-
 func normalizeWebhookRecord(record WebhookRecord) (WebhookRecord, error) {
 	if len(record.Events) == 0 {
 		record.Events = []string{"incoming_message"}
@@ -1837,47 +1383,6 @@ func normalizeWebhookRecord(record WebhookRecord) (WebhookRecord, error) {
 	}
 	if record.ContextLimit > 100 {
 		record.ContextLimit = 100
-	}
-	return record, nil
-}
-
-func normalizeOpenClawBridgeRecord(record OpenClawBridgeRecord) (OpenClawBridgeRecord, error) {
-	if strings.TrimSpace(record.Command) == "" {
-		record.Command = "openclaw"
-	}
-	if strings.TrimSpace(record.Scope) == "" {
-		record.Scope = "all_unlocked"
-	}
-	record.Scope = strings.ToLower(strings.TrimSpace(record.Scope))
-	switch record.Scope {
-	case "all", "all_unlocked", "all-unlocked":
-		record.Scope = "all_unlocked"
-	case "chat", "single_chat", "selected_chats", "selected-chats":
-		record.Scope = "selected_chats"
-	default:
-		return OpenClawBridgeRecord{}, fmt.Errorf("unsupported openclaw bridge scope %q", record.Scope)
-	}
-	record.ChatJIDs = normalizeStringList(record.ChatJIDs, false)
-	if record.Scope == "selected_chats" && len(record.ChatJIDs) == 0 {
-		return OpenClawBridgeRecord{}, errors.New("chat_jids required when openclaw bridge scope is selected_chats")
-	}
-	record.MessageTypes = normalizeStringList(record.MessageTypes, true)
-	if len(record.MessageTypes) == 0 {
-		record.MessageTypes = []string{"*"}
-	}
-	for idx, value := range record.MessageTypes {
-		record.MessageTypes[idx] = normalizeWebhookMessageType(value)
-	}
-	record.MessageTypes = normalizeStringList(record.MessageTypes, true)
-	if record.ContextLimit <= 0 {
-		record.ContextLimit = 12
-	}
-	if record.ContextLimit > 100 {
-		record.ContextLimit = 100
-	}
-	record.Instruction = strings.TrimSpace(record.Instruction)
-	if record.Instruction == "" {
-		record.Instruction = defaultOpenClawInstruction(defaultAssistantSettings())
 	}
 	return record, nil
 }

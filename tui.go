@@ -20,7 +20,6 @@ const (
 	tuiSectionChats
 	tuiSectionLogs
 	tuiSectionWebhooks
-	tuiSectionAssistant
 )
 
 var (
@@ -37,12 +36,9 @@ var (
 
 type tuiSnapshot struct {
 	Status     daemonclient.StatusSnapshot
-	Assistant  daemonclient.AssistantSettings
 	Chats      []daemonclient.ChatRecord
 	Logs       []daemonclient.AppLogRecord
 	Webhooks   []daemonclient.WebhookRecord
-	Bridges    []daemonclient.OpenClawBridgeRecord
-	Deliveries []daemonclient.OpenClawDeliveryRecord
 	ChatFilter string
 	FetchedAt  time.Time
 }
@@ -69,18 +65,14 @@ type tuiModel struct {
 
 	active      tuiSection
 	status      daemonclient.StatusSnapshot
-	assistant   daemonclient.AssistantSettings
 	chats       []daemonclient.ChatRecord
 	logs        []daemonclient.AppLogRecord
 	webhooks    []daemonclient.WebhookRecord
-	bridges     []daemonclient.OpenClawBridgeRecord
-	deliveries  []daemonclient.OpenClawDeliveryRecord
 	chatFilter  string
 	lastRefresh time.Time
 
-	chatIndex      int
-	logIndex       int
-	assistantIndex int
+	chatIndex int
+	logIndex  int
 
 	statusMessage string
 	lastError     string
@@ -131,10 +123,6 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg{Err: err}
 		}
-		assistant, err := client.GetAssistantSettings(ctx)
-		if err != nil {
-			return tuiErrMsg{Err: err}
-		}
 		chats, err := client.ListChats(ctx, daemonclient.ChatListOptions{Filter: filter, Limit: 200})
 		if err != nil {
 			return tuiErrMsg{Err: err}
@@ -147,23 +135,12 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err != nil {
 			return tuiErrMsg{Err: err}
 		}
-		bridges, err := client.ListOpenClawBridges(ctx)
-		if err != nil {
-			return tuiErrMsg{Err: err}
-		}
-		deliveries, err := client.ListOpenClawDeliveries(ctx, daemonclient.DeliveryQuery{Limit: 30})
-		if err != nil {
-			return tuiErrMsg{Err: err}
-		}
 		return tuiSnapshotMsg{
 			Snapshot: tuiSnapshot{
 				Status:     status,
-				Assistant:  assistant,
 				Chats:      chats,
 				Logs:       logs,
 				Webhooks:   webhooks,
-				Bridges:    bridges,
-				Deliveries: deliveries,
 				ChatFilter: filter,
 				FetchedAt:  time.Now(),
 			},
@@ -183,19 +160,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tuiSnapshotMsg:
 		m.status = msg.Snapshot.Status
-		m.assistant = msg.Snapshot.Assistant
 		m.chats = msg.Snapshot.Chats
 		m.logs = msg.Snapshot.Logs
 		m.webhooks = msg.Snapshot.Webhooks
-		m.bridges = msg.Snapshot.Bridges
-		m.deliveries = msg.Snapshot.Deliveries
 		m.chatFilter = msg.Snapshot.ChatFilter
 		m.lastRefresh = msg.Snapshot.FetchedAt
 		m.statusMessage = fmt.Sprintf("Refreshed %s", m.lastRefresh.Format("15:04:05"))
 		m.lastError = ""
 		m.chatIndex = clampIndex(m.chatIndex, len(m.chats))
 		m.logIndex = clampIndex(m.logIndex, len(m.logs))
-		m.assistantIndex = clampIndex(m.assistantIndex, len(tuiAssistantFields()))
 		return m, nil
 	case tuiErrMsg:
 		m.lastError = msg.Err.Error()
@@ -225,9 +198,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "4":
 			m.active = tuiSectionWebhooks
 			return m, nil
-		case "5":
-			m.active = tuiSectionAssistant
-			return m, nil
 		case "d":
 			return m, m.toggleDNDCmd()
 		case "j", "down":
@@ -236,8 +206,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatIndex = clampIndex(m.chatIndex+1, len(m.chats))
 			case tuiSectionLogs:
 				m.logIndex = clampIndex(m.logIndex+1, len(m.logs))
-			case tuiSectionAssistant:
-				m.assistantIndex = clampIndex(m.assistantIndex+1, len(tuiAssistantFields()))
 			}
 			return m, nil
 		case "k", "up":
@@ -246,8 +214,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatIndex = clampIndex(m.chatIndex-1, len(m.chats))
 			case tuiSectionLogs:
 				m.logIndex = clampIndex(m.logIndex-1, len(m.logs))
-			case tuiSectionAssistant:
-				m.assistantIndex = clampIndex(m.assistantIndex-1, len(tuiAssistantFields()))
 			}
 			return m, nil
 		case "f":
@@ -259,10 +225,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.active == tuiSectionChats && len(m.chats) > 0 {
 				chat := m.chats[m.chatIndex]
 				return m, m.setChatLockedCmd(chat.JID, !chat.Locked)
-			}
-		case "enter", "e":
-			if m.active == tuiSectionAssistant {
-				return m.beginAssistantEdit(), nil
 			}
 		}
 	}
@@ -279,59 +241,11 @@ func (m tuiModel) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inputField = ""
 			m.input.Blur()
 			return m, nil
-		case "enter":
-			value := m.input.Value()
-			settings := m.assistant
-			switch m.inputField {
-			case "assistant_name":
-				settings.AssistantName = value
-			case "personality":
-				settings.Personality = value
-			case "behavior":
-				settings.Behavior = value
-			case "reply_style":
-				settings.ReplyStyle = value
-			case "reply_instruction":
-				settings.ReplyInstruction = value
-			case "preferred_runtime":
-				settings.PreferredRuntime = value
-			case "codex_model":
-				settings.CodexModel = value
-			case "claude_model":
-				settings.ClaudeModel = value
-			case "openclaw_command":
-				settings.OpenClawCommand = value
-			case "karma_provider":
-				settings.KarmaProvider = value
-			case "karma_model":
-				settings.KarmaModel = value
-			case "karma_api_key":
-				settings.KarmaAPIKey = value
-			}
-			m.assistant = settings
-			m.inputMode = false
-			m.inputField = ""
-			m.input.Blur()
-			return m, m.saveAssistantSettingsCmd(settings)
 		}
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
-}
-
-func (m tuiModel) beginAssistantEdit() tuiModel {
-	fields := tuiAssistantFields()
-	if len(fields) == 0 {
-		return m
-	}
-	field := fields[m.assistantIndex]
-	m.inputMode = true
-	m.inputField = field.Key
-	m.input.SetValue(field.Value(m.assistant))
-	m.input.Placeholder = field.Label
-	m.input.Focus()
-	return m
 }
 
 func (m tuiModel) toggleDNDCmd() tea.Cmd {
@@ -364,18 +278,6 @@ func (m tuiModel) setChatLockedCmd(jid string, locked bool) tea.Cmd {
 	}
 }
 
-func (m tuiModel) saveAssistantSettingsCmd(settings daemonclient.AssistantSettings) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if _, err := client.PutAssistantSettings(ctx, settings); err != nil {
-			return tuiErrMsg{Err: err}
-		}
-		return tuiOpDoneMsg{Message: "Assistant settings saved"}
-	}
-}
-
 func (m tuiModel) View() string {
 	if m.width == 0 {
 		return "Loading WACLI TUI..."
@@ -388,13 +290,11 @@ func (m tuiModel) View() string {
 		body = m.viewLogs()
 	case tuiSectionWebhooks:
 		body = m.viewWebhooks()
-	case tuiSectionAssistant:
-		body = m.viewAssistant()
 	default:
 		body = m.viewDashboard()
 	}
 
-	statusLine := tuiMutedStyle.Render("1 Dashboard  2 Chats  3 Logs  4 Webhooks  5 Assistant  |  r refresh  d toggle DND  q quit")
+	statusLine := tuiMutedStyle.Render("1 Dashboard  2 Chats  3 Logs  4 Webhooks  |  r refresh  d toggle DND  q quit")
 	if m.inputMode {
 		statusLine = tuiTitleStyle.Render("Editing "+m.inputField+":") + "\n" + m.input.View()
 	}
@@ -423,7 +323,6 @@ func (m tuiModel) viewTabs() string {
 		{tuiSectionChats, "Chats"},
 		{tuiSectionLogs, "Logs"},
 		{tuiSectionWebhooks, "Webhooks"},
-		{tuiSectionAssistant, "Assistant"},
 	}
 	parts := make([]string, 0, len(labels))
 	for _, item := range labels {
@@ -450,18 +349,8 @@ func (m tuiModel) viewDashboard() string {
 		fmt.Sprintf("Chats: %d", m.status.ChatCount),
 		fmt.Sprintf("Messages: %d", m.status.MessageCount),
 		fmt.Sprintf("Last sync: %s", lastSync),
-		fmt.Sprintf("Preferred runtime: %s", nonEmpty(m.assistant.PreferredRuntime, "openclaw")),
 		fmt.Sprintf("Webhooks: %d", len(m.webhooks)),
-		fmt.Sprintf("OpenClaw bridges: %d", len(m.bridges)),
 		fmt.Sprintf("Last refresh: %s", m.lastRefresh.Format("15:04:05")),
-	}
-	if len(m.deliveries) > 0 {
-		delivery := m.deliveries[0]
-		lines = append(lines,
-			"",
-			"Latest assistant delivery:",
-			fmt.Sprintf("%s | %s | %s", delivery.UpdatedAt.Format("15:04:05"), delivery.ChatName, delivery.Status),
-		)
 	}
 	return tuiBoxStyle.Width(max(40, m.width-4)).Render(strings.Join(lines, "\n"))
 }
@@ -525,7 +414,7 @@ func (m tuiModel) viewLogs() string {
 }
 
 func (m tuiModel) viewWebhooks() string {
-	lines := []string{tuiTitleStyle.Render("Webhooks & OpenClaw")}
+	lines := []string{tuiTitleStyle.Render("Webhooks")}
 	lines = append(lines, fmt.Sprintf("HTTP webhooks: %d", len(m.webhooks)))
 	for idx, webhook := range m.webhooks {
 		if idx >= 8 {
@@ -534,67 +423,7 @@ func (m tuiModel) viewWebhooks() string {
 		}
 		lines = append(lines, fmt.Sprintf("- #%d %s [%s]", webhook.ID, webhook.URL, boolLabel(webhook.Enabled)))
 	}
-	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("OpenClaw bridges: %d", len(m.bridges)))
-	for idx, bridge := range m.bridges {
-		if idx >= 8 {
-			lines = append(lines, tuiMutedStyle.Render(fmt.Sprintf("...and %d more bridges", len(m.bridges)-idx)))
-			break
-		}
-		lines = append(lines, fmt.Sprintf("- #%d %s [%s] scope=%s", bridge.ID, bridge.Command, boolLabel(bridge.Enabled), bridge.Scope))
-	}
-	if len(m.deliveries) > 0 {
-		lines = append(lines, "", "Recent deliveries:")
-		for idx, delivery := range m.deliveries {
-			if idx >= 8 {
-				break
-			}
-			lines = append(lines, fmt.Sprintf("- %s %s %s", delivery.UpdatedAt.Format("15:04:05"), nonEmpty(delivery.ChatName, delivery.ChatJID), delivery.Status))
-		}
-	}
-	lines = append(lines, "", tuiMutedStyle.Render("Use the desktop UI or CLI for full webhook/bridge CRUD"))
 	return tuiBoxStyle.Width(max(40, m.width-4)).Render(strings.Join(lines, "\n"))
-}
-
-func (m tuiModel) viewAssistant() string {
-	fields := tuiAssistantFields()
-	lines := []string{tuiTitleStyle.Render("Assistant Settings")}
-	for idx, field := range fields {
-		cursor := " "
-		if idx == m.assistantIndex {
-			cursor = ">"
-		}
-		value := field.Value(m.assistant)
-		if field.Key == "karma_api_key" && strings.TrimSpace(value) != "" {
-			value = maskSecret(value)
-		}
-		lines = append(lines, fmt.Sprintf("%s %s: %s", cursor, field.Label, nonEmpty(value, "<empty>")))
-	}
-	lines = append(lines, "", tuiMutedStyle.Render("Use j/k to move and Enter to edit the selected field"))
-	return tuiBoxStyle.Width(max(40, m.width-4)).Render(strings.Join(lines, "\n"))
-}
-
-type tuiAssistantField struct {
-	Key   string
-	Label string
-	Value func(daemonclient.AssistantSettings) string
-}
-
-func tuiAssistantFields() []tuiAssistantField {
-	return []tuiAssistantField{
-		{Key: "assistant_name", Label: "Assistant Name", Value: func(s daemonclient.AssistantSettings) string { return s.AssistantName }},
-		{Key: "personality", Label: "Personality", Value: func(s daemonclient.AssistantSettings) string { return s.Personality }},
-		{Key: "behavior", Label: "Behavior", Value: func(s daemonclient.AssistantSettings) string { return s.Behavior }},
-		{Key: "reply_style", Label: "Reply Style", Value: func(s daemonclient.AssistantSettings) string { return s.ReplyStyle }},
-		{Key: "reply_instruction", Label: "Reply Instruction", Value: func(s daemonclient.AssistantSettings) string { return s.ReplyInstruction }},
-		{Key: "preferred_runtime", Label: "Preferred Runtime", Value: func(s daemonclient.AssistantSettings) string { return s.PreferredRuntime }},
-		{Key: "codex_model", Label: "Codex Model", Value: func(s daemonclient.AssistantSettings) string { return s.CodexModel }},
-		{Key: "claude_model", Label: "Claude Model", Value: func(s daemonclient.AssistantSettings) string { return s.ClaudeModel }},
-		{Key: "openclaw_command", Label: "OpenClaw Command", Value: func(s daemonclient.AssistantSettings) string { return s.OpenClawCommand }},
-		{Key: "karma_provider", Label: "Karma Provider", Value: func(s daemonclient.AssistantSettings) string { return s.KarmaProvider }},
-		{Key: "karma_model", Label: "Karma Model", Value: func(s daemonclient.AssistantSettings) string { return s.KarmaModel }},
-		{Key: "karma_api_key", Label: "Karma API Key", Value: func(s daemonclient.AssistantSettings) string { return s.KarmaAPIKey }},
-	}
 }
 
 func nextChatFilter(current string) string {
@@ -634,13 +463,6 @@ func boolLabel(v bool) string {
 	return "disabled"
 }
 
-func nonEmpty(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}
-
 func renderStatusMessage(value string, isError bool) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
@@ -664,12 +486,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func maskSecret(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= 8 {
-		return strings.Repeat("*", len(value))
-	}
-	return value[:4] + strings.Repeat("*", len(value)-8) + value[len(value)-4:]
 }

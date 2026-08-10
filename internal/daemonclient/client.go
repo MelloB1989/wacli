@@ -77,23 +77,6 @@ func (c *Client) Sync(ctx context.Context) (SyncResponse, error) {
 	return response, err
 }
 
-func (c *Client) GetAssistantSettings(ctx context.Context) (AssistantSettings, error) {
-	var response AssistantSettings
-	err := c.do(ctx, http.MethodGet, "/assistant/settings", nil, nil, &response)
-	return response, err
-}
-
-func (c *Client) PutAssistantSettings(ctx context.Context, settings AssistantSettings) (AssistantSettings, error) {
-	var response struct {
-		OK                bool              `json:"ok"`
-		AssistantSettings AssistantSettings `json:"assistant_settings"`
-	}
-	if err := c.do(ctx, http.MethodPut, "/assistant/settings", nil, settings, &response); err != nil {
-		return AssistantSettings{}, err
-	}
-	return response.AssistantSettings, nil
-}
-
 func (c *Client) ListChats(ctx context.Context, opts ChatListOptions) ([]ChatRecord, error) {
 	query := url.Values{}
 	if strings.TrimSpace(opts.Filter) != "" {
@@ -151,36 +134,6 @@ func (c *Client) ListWebhooks(ctx context.Context) ([]WebhookRecord, error) {
 		return nil, err
 	}
 	return response.Webhooks, nil
-}
-
-func (c *Client) ListOpenClawBridges(ctx context.Context) ([]OpenClawBridgeRecord, error) {
-	var response struct {
-		OpenClawBridges []OpenClawBridgeRecord `json:"openclaw_bridges"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/openclaw_bridges", nil, nil, &response); err != nil {
-		return nil, err
-	}
-	return response.OpenClawBridges, nil
-}
-
-func (c *Client) ListOpenClawDeliveries(ctx context.Context, opts DeliveryQuery) ([]OpenClawDeliveryRecord, error) {
-	query := url.Values{}
-	if strings.TrimSpace(opts.Status) != "" {
-		query.Set("status", strings.TrimSpace(opts.Status))
-	}
-	if strings.TrimSpace(opts.Query) != "" {
-		query.Set("query", strings.TrimSpace(opts.Query))
-	}
-	if opts.Limit > 0 {
-		query.Set("limit", strconv.Itoa(opts.Limit))
-	}
-	var response struct {
-		OpenClawDeliveries []OpenClawDeliveryRecord `json:"openclaw_deliveries"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/openclaw_deliveries", query, nil, &response); err != nil {
-		return nil, err
-	}
-	return response.OpenClawDeliveries, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {

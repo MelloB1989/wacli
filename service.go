@@ -742,7 +742,6 @@ func (s *Service) onLiveMessage(evt *events.Message) {
 		return
 	}
 	s.dispatchWebhook("incoming_message", s.buildMessageWebhookPayload(chat, record, "whatsapp_event"))
-	go s.dispatchOpenClawInbound(chat, record)
 	go s.maybeSendAutoReply(chat, record)
 }
 
@@ -2041,4 +2040,38 @@ func (s *Service) postWebhook(webhook WebhookRecord, event string, deliveryID in
 		"http_status": resp.StatusCode,
 	})
 	fmt.Printf("webhook delivery webhook_id=%d event=%s status=done http_status=%d url=%s\n", webhook.ID, event, resp.StatusCode, webhook.URL)
+}
+
+// --- shared helpers ---
+// Recovered when the AI bridge was removed: both are used by webhook and trigger filtering, and only
+// happened to live in that file.
+
+func messageKindsMatch(filters []string, message MessageRecord) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	kinds := webhookMessageKinds(message)
+	for _, candidate := range filters {
+		candidate = normalizeWebhookMessageType(candidate)
+		if candidate == "" {
+			continue
+		}
+		if candidate == "*" || candidate == "all" || candidate == "any" {
+			return true
+		}
+		for _, kind := range kinds {
+			if candidate == kind {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func truncateString(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }

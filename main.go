@@ -76,8 +76,6 @@ func main() {
 		cmdContacts(os.Args[2:])
 	case "webhooks":
 		cmdWebhooks(os.Args[2:])
-	case "openclaw":
-		cmdOpenClaw(os.Args[2:])
 	case "auto-replies", "autoreplies":
 		cmdAutoReplies(os.Args[2:])
 	case "api":
@@ -1163,14 +1161,11 @@ usage:
   wacli call answer [--say s]  accept a ringing call and speak into it
   wacli call dump [--last N]    print captured call stanzas as an annotated tree
   wacli webhooks ...            list, add, remove, and inspect webhook delivery logs
-  wacli openclaw ...            list, add, update, remove, replay, and inspect OpenClaw bridges
   wacli auto-replies ...        list, add, and remove auto-reply rules
   wacli api ...                 generic local API client for uncovered cases
 
 AI-facing HTTP API:
   GET    /status
-  GET    /assistant/settings
-  PUT    /assistant/settings
   GET    /logs
   GET    /dnd
   PUT    /dnd
@@ -1205,14 +1200,6 @@ AI-facing HTTP API:
   POST   /webhooks
   DELETE /webhooks/{id}
   GET    /webhook_deliveries
-  GET    /openclaw_bridges
-  POST   /openclaw_bridges
-  GET    /openclaw_bridges/{id}
-  PUT    /openclaw_bridges/{id}
-  DELETE /openclaw_bridges/{id}
-  GET    /openclaw_sessions
-  GET    /openclaw_deliveries
-  POST   /openclaw_replay
   GET    /auto_replies
   POST   /auto_replies
   DELETE /auto_replies/{id}
