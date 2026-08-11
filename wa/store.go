@@ -9,8 +9,30 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
+
+// sqliteDriver is the database/sql driver name registered by modernc.org/sqlite.
+//
+// The driver is a pure-Go translation of SQLite rather than a cgo binding, which is what lets wacli
+// cross-compile: a cgo build needs a C toolchain for every target, and the mobile targets (Android
+// via the NDK, iOS via Xcode) are exactly the ones a CI runner is least likely to have. Keeping the
+// tree CGO-free means `GOOS=android GOARCH=arm64 go build` works from any machine.
+//
+// Note the name differs from the old cgo driver's: modernc registers "sqlite", mattn registered
+// "sqlite3". whatsmeow's dialect string is a separate thing — see NewService.
+const sqliteDriver = "sqlite"
+
+// sqliteDSN builds the connection string for a wacli database file.
+//
+// modernc.org/sqlite takes pragmas as repeated _pragma query parameters on a file: URI, which is a
+// different spelling from the cgo driver's _foreign_keys/_busy_timeout parameters but sets the same
+// two things. busy_timeout matters more than it looks: the daemon writes from the whatsmeow event
+// goroutine while HTTP handlers read, so without it a concurrent write returns SQLITE_BUSY instead
+// of waiting.
+func sqliteDSN(path string) string {
+	return "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+}
 
 const (
 	settingDNDMode                 = "dnd_mode"
@@ -175,7 +197,7 @@ type MessageSearchOptions struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_busy_timeout=5000")
+	db, err := sql.Open(sqliteDriver, sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open store db: %w", err)
 	}

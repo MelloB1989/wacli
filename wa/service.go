@@ -86,11 +86,13 @@ func NewService(store *Store) (*Service, error) {
 		_ = capture.Enable()
 	}
 	log := newCaptureLogger(baseLog, capture)
-	db, err := sql.Open("sqlite3", SessionDBPath+"?_foreign_keys=on&_busy_timeout=5000")
+	db, err := sql.Open(sqliteDriver, sqliteDSN(SessionDBPath))
 	if err != nil {
 		return nil, fmt.Errorf("open session db: %w", err)
 	}
-	container := sqlstore.NewWithDB(db, "sqlite3", log)
+	// The dialect names the SQL flavour whatsmeow generates, not the driver: dbutil.ParseDialect
+	// matches any "sqlite" prefix, so this stays correct now that the driver is modernc's.
+	container := sqlstore.NewWithDB(db, sqliteDriver, log)
 	if err := container.Upgrade(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("session db upgrade: %w", err)

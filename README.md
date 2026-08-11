@@ -37,7 +37,10 @@ party sees your messages.
 
 ## Install
 
-Requires **Go 1.25+** and **CGO** (SQLite via `mattn/go-sqlite3`).
+Requires **Go 1.25+**. The tree is **CGO-free** (SQLite via the pure-Go
+`modernc.org/sqlite`), so it cross-compiles to any target without a C toolchain
+— including Android and iOS, which is what makes the
+[Expo module](expo-wacli/) possible.
 
 ```bash
 go install github.com/MelloB1989/wacli@latest
