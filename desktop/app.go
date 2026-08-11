@@ -39,43 +39,63 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) GetStatus() (StatusSnapshot, error) {
-	return a.client.status(a.callContext(10 * time.Second))
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.status(ctx)
 }
 
 func (a *App) SetDND(enabled bool) error {
-	return a.client.setDND(a.callContext(10*time.Second), enabled)
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.setDND(ctx, enabled)
 }
 
 func (a *App) Sync() (SyncResponse, error) {
-	return a.client.sync(a.callContext(45 * time.Second))
+	ctx, cancel := a.callContext(45 * time.Second)
+	defer cancel()
+	return a.client.sync(ctx)
 }
 
 func (a *App) ListChats(filter, query string, limit int) ([]ChatRecord, error) {
-	return a.client.chats(a.callContext(15*time.Second), filter, query, limit)
+	ctx, cancel := a.callContext(15 * time.Second)
+	defer cancel()
+	return a.client.chats(ctx, filter, query, limit)
 }
 
 func (a *App) SetChatLocked(jid string, locked bool) error {
-	return a.client.setChatLocked(a.callContext(10*time.Second), jid, locked)
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.setChatLocked(ctx, jid, locked)
 }
 
 func (a *App) ConfigureAccess(unlockedJIDs []string) error {
-	return a.client.configureAccess(a.callContext(20*time.Second), unlockedJIDs)
+	ctx, cancel := a.callContext(20 * time.Second)
+	defer cancel()
+	return a.client.configureAccess(ctx, unlockedJIDs)
 }
 
 func (a *App) ListLogs(limit int) ([]AppLogRecord, error) {
-	return a.client.logs(a.callContext(10*time.Second), limit)
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.logs(ctx, limit)
 }
 
 func (a *App) ListWebhooks() ([]WebhookRecord, error) {
-	return a.client.webhooks(a.callContext(10 * time.Second))
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.webhooks(ctx)
 }
 
 func (a *App) CreateWebhook(record WebhookRecord) (WebhookRecord, error) {
-	return a.client.createWebhook(a.callContext(15*time.Second), record)
+	ctx, cancel := a.callContext(15 * time.Second)
+	defer cancel()
+	return a.client.createWebhook(ctx, record)
 }
 
 func (a *App) DeleteWebhook(id int64) error {
-	return a.client.deleteWebhook(a.callContext(10*time.Second), id)
+	ctx, cancel := a.callContext(10 * time.Second)
+	defer cancel()
+	return a.client.deleteWebhook(ctx, id)
 }
 
 func (a *App) StartLogin(pairCode bool, phone string) error {
@@ -136,13 +156,15 @@ func (a *App) GetQRCodeData() (string, error) {
 	return readQRDataURI()
 }
 
-func (a *App) callContext(timeout time.Duration) context.Context {
+// callContext derives a deadline for one daemon call. The caller must defer the returned cancel:
+// dropping it leaks the context and its timer until the deadline fires, and these are per-UI-action
+// calls against a long-lived parent, so they accumulate for as long as the app is open.
+func (a *App) callContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 	ctx := context.Background()
 	if a.ctx != nil {
 		ctx = a.ctx
 	}
-	callCtx, _ := context.WithTimeout(ctx, timeout)
-	return callCtx
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (a *App) consumeLoginPipe(reader io.ReadCloser) {
