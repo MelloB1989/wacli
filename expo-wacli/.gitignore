@@ -1,7 +1,8 @@
 # gomobile output. Built by scripts/build-bindings.sh, never committed: the AAR carries a copy of
 # the Go runtime per Android ABI and the XCFramework one per Apple architecture, which is around
-# 100 MB of build artifact between them.
-android/libs/*.aar
+# 100 MB of build artifact between them. The whole directory rather than *.aar, because the bind
+# also drops a sources jar next to it.
+android/libs/
 ios/Frameworks/
 
 # Not committed: expo-wacli is published as a library, and the workspace root is that library, so
