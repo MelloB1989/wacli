@@ -1,15 +1,17 @@
-package main
+package cli
 
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	wa "github.com/MelloB1989/wacli/wa"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/MelloB1989/wacli/wa"
 )
 
 type stringListFlag []string
@@ -23,16 +25,16 @@ func (f *stringListFlag) Set(value string) error {
 	return nil
 }
 
-func cmdResolve(args []string) {
-	fs := flag.NewFlagSet("resolve", flag.ExitOnError)
+func (e *Env) cmdResolve(args []string) {
+	fs := e.newFlagSet("resolve")
 	kind := fs.String("kind", "any", "any|chat|contact")
 	limit := fs.Int("limit", 10, "maximum matches to return")
 	allowDirect := fs.Bool("allow-direct", true, "allow direct JID/phone resolution")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	ref := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if ref == "" {
-		die("usage: wacli resolve [--kind any|chat|contact] [--limit N] [--allow-direct=true|false] <reference>")
+		e.die("usage: wacli resolve [--kind any|chat|contact] [--limit N] [--allow-direct=true|false] <reference>")
 	}
 
 	query := url.Values{}
@@ -42,14 +44,14 @@ func cmdResolve(args []string) {
 	query.Set("allow_direct", strconv.FormatBool(*allowDirect))
 
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/resolve", query, nil, &response); err != nil {
-		die("resolve: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/resolve", query, nil, &response); err != nil {
+		e.die("resolve: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdMessages(args []string) {
-	fs := flag.NewFlagSet("messages", flag.ExitOnError)
+func (e *Env) cmdMessages(args []string) {
+	fs := e.newFlagSet("messages")
 	chatRef := fs.String("chat", "", "chat name, phone, chat ID, or JID")
 	senderRef := fs.String("sender", "", "sender name, phone, or JID")
 	queryText := fs.String("query", "", "search within content, filenames, and message type")
@@ -58,7 +60,7 @@ func cmdMessages(args []string) {
 	fromMe := fs.String("from-me", "", "yes|no|true|false")
 	before := fs.String("before", "", "latest timestamp, RFC3339")
 	after := fs.String("after", "", "earliest timestamp, RFC3339")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	query := url.Values{}
 	if strings.TrimSpace(*chatRef) != "" {
@@ -87,90 +89,90 @@ func cmdMessages(args []string) {
 	}
 
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/messages", query, nil, &response); err != nil {
-		die("messages: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/messages", query, nil, &response); err != nil {
+		e.die("messages: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdEdit(args []string) {
-	fs := flag.NewFlagSet("edit", flag.ExitOnError)
+func (e *Env) cmdEdit(args []string) {
+	fs := e.newFlagSet("edit")
 	chat := fs.String("chat", "", "chat name, phone, chat ID, or JID")
 	id := fs.String("id", "", "message ID to edit")
 	text := fs.String("text", "", "new message text")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	if *text == "" && fs.NArg() > 0 {
 		*text = strings.Join(fs.Args(), " ")
 	}
 	if *chat == "" || *id == "" || *text == "" {
-		die("usage: wacli edit --chat <ref> --id <message-id> --text <new text>")
+		e.die("usage: wacli edit --chat <ref> --id <message-id> --text <new text>")
 	}
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/messages/edit", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/messages/edit", map[string]any{
 		"chat": *chat, "id": *id, "text": *text,
 	}, &response); err != nil {
-		die("edit: %v", err)
+		e.die("edit: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdDelete(args []string) {
-	fs := flag.NewFlagSet("delete", flag.ExitOnError)
+func (e *Env) cmdDelete(args []string) {
+	fs := e.newFlagSet("delete")
 	chat := fs.String("chat", "", "chat name, phone, chat ID, or JID")
 	id := fs.String("id", "", "message ID to delete (revoke for everyone)")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	if *chat == "" || *id == "" {
-		die("usage: wacli delete --chat <ref> --id <message-id>")
+		e.die("usage: wacli delete --chat <ref> --id <message-id>")
 	}
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/messages/delete", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/messages/delete", map[string]any{
 		"chat": *chat, "id": *id,
 	}, &response); err != nil {
-		die("delete: %v", err)
+		e.die("delete: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdReceipts(args []string) {
-	fs := flag.NewFlagSet("receipts", flag.ExitOnError)
+func (e *Env) cmdReceipts(args []string) {
+	fs := e.newFlagSet("receipts")
 	id := fs.String("id", "", "message ID to inspect")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	if *id == "" && fs.NArg() > 0 {
 		*id = strings.TrimSpace(fs.Args()[0])
 	}
 	if *id == "" {
-		die("usage: wacli receipts --id <message-id>")
+		e.die("usage: wacli receipts --id <message-id>")
 	}
 	query := url.Values{}
 	query.Set("id", *id)
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/messages/receipts", query, nil, &response); err != nil {
-		die("receipts: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/messages/receipts", query, nil, &response); err != nil {
+		e.die("receipts: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdContacts(args []string) {
+func (e *Env) cmdContacts(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli contacts <list|lookup|update>")
+		e.die("usage: wacli contacts <list|lookup|update>")
 	}
 	switch args[0] {
 	case "list":
-		cmdContactsList(args[1:])
+		e.cmdContactsList(args[1:])
 	case "lookup", "get":
-		cmdContactsLookup(args[1:])
+		e.cmdContactsLookup(args[1:])
 	case "update":
-		cmdContactsUpdate(args[1:])
+		e.cmdContactsUpdate(args[1:])
 	default:
-		die("usage: wacli contacts <list|lookup|update>")
+		e.die("usage: wacli contacts <list|lookup|update>")
 	}
 }
 
-func cmdContactsList(args []string) {
-	fs := flag.NewFlagSet("contacts list", flag.ExitOnError)
+func (e *Env) cmdContactsList(args []string) {
+	fs := e.newFlagSet("contacts list")
 	limit := fs.Int("limit", 200, "maximum contacts to return")
 	queryText := fs.String("query", "", "search by name, phone, or JID")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	query := url.Values{}
 	query.Set("limit", strconv.Itoa(*limit))
@@ -179,49 +181,49 @@ func cmdContactsList(args []string) {
 	}
 
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/contacts", query, nil, &response); err != nil {
-		die("contacts list: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/contacts", query, nil, &response); err != nil {
+		e.die("contacts list: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdContactsLookup(args []string) {
-	fs := flag.NewFlagSet("contacts lookup", flag.ExitOnError)
+func (e *Env) cmdContactsLookup(args []string) {
+	fs := e.newFlagSet("contacts lookup")
 	refFlag := fs.String("ref", "", "contact/chat reference")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	ref := strings.TrimSpace(*refFlag)
 	if ref == "" {
 		ref = strings.TrimSpace(strings.Join(fs.Args(), " "))
 	}
 	if ref == "" {
-		die("usage: wacli contacts lookup [--ref <reference>] <reference>")
+		e.die("usage: wacli contacts lookup [--ref <reference>] <reference>")
 	}
 
 	query := url.Values{}
 	query.Set("ref", ref)
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/contacts/lookup", query, nil, &response); err != nil {
-		die("contacts lookup: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/contacts/lookup", query, nil, &response); err != nil {
+		e.die("contacts lookup: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdContactsUpdate(args []string) {
-	fs := flag.NewFlagSet("contacts update", flag.ExitOnError)
+func (e *Env) cmdContactsUpdate(args []string) {
+	fs := e.newFlagSet("contacts update")
 	refFlag := fs.String("ref", "", "contact/chat reference")
 	bio := fs.String("bio", "", "bio value")
 	notes := fs.String("notes", "", "freeform notes")
 	memory := fs.String("memory", "", "AI memory summary")
 	metadataJSON := fs.String("metadata-json", "", "arbitrary JSON string")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	ref := strings.TrimSpace(*refFlag)
 	if ref == "" {
 		ref = strings.TrimSpace(strings.Join(fs.Args(), " "))
 	}
 	if ref == "" {
-		die("usage: wacli contacts update [--ref <reference>] [--bio ...] [--notes ...] [--memory ...] [--metadata-json ...]")
+		e.die("usage: wacli contacts update [--ref <reference>] [--bio ...] [--notes ...] [--memory ...] [--metadata-json ...]")
 	}
 
 	body := map[string]any{"ref": ref}
@@ -238,165 +240,165 @@ func cmdContactsUpdate(args []string) {
 		body["metadata_json"] = *metadataJSON
 	}
 	if len(body) == 1 {
-		die("contacts update: at least one of --bio, --notes, --memory, or --metadata-json is required")
+		e.die("contacts update: at least one of --bio, --notes, --memory, or --metadata-json is required")
 	}
 
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPut, "/contacts/update", body, &response); err != nil {
-		die("contacts update: %v", err)
+	if err := e.callAPI(http.MethodPut, "/contacts/update", body, &response); err != nil {
+		e.die("contacts update: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdBulkSend(args []string) {
-	fs := flag.NewFlagSet("bulk-send", flag.ExitOnError)
+func (e *Env) cmdBulkSend(args []string) {
+	fs := e.newFlagSet("bulk-send")
 	intervalMS := fs.Int("interval-ms", 0, "delay between sends in milliseconds")
 	itemsFile := fs.String("items-file", "", "JSON array/object or newline-delimited items file")
 	stdinJSON := fs.Bool("stdin-json", false, "read JSON array/object or newline-delimited items from stdin")
 	var itemFlags stringListFlag
 	fs.Var(&itemFlags, "item", "bulk item as JSON object or to=...,text=...,media=...")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	var items []wa.BulkSendItem
 	for _, raw := range itemFlags {
 		item, err := parseBulkSendItemSpec(raw)
 		if err != nil {
-			die("bulk-send item: %v", err)
+			e.die("bulk-send item: %v", err)
 		}
 		items = append(items, item)
 	}
 	if strings.TrimSpace(*itemsFile) != "" {
 		data, err := os.ReadFile(strings.TrimSpace(*itemsFile))
 		if err != nil {
-			die("bulk-send read items-file: %v", err)
+			e.die("bulk-send read items-file: %v", err)
 		}
 		parsed, err := parseBulkSendInput(data)
 		if err != nil {
-			die("bulk-send parse items-file: %v", err)
+			e.die("bulk-send parse items-file: %v", err)
 		}
 		items = append(items, parsed...)
 	}
 	if *stdinJSON {
-		data, err := readAllStdin()
+		data, err := e.readAllStdin()
 		if err != nil {
-			die("bulk-send read stdin: %v", err)
+			e.die("bulk-send read stdin: %v", err)
 		}
 		parsed, err := parseBulkSendInput(data)
 		if err != nil {
-			die("bulk-send parse stdin: %v", err)
+			e.die("bulk-send parse stdin: %v", err)
 		}
 		items = append(items, parsed...)
 	}
 	if len(items) == 0 {
-		die("usage: wacli bulk-send [--item '{\"to\":\"...\",\"text\":\"...\"}'] [--items-file path] [--stdin-json]")
+		e.die("usage: wacli bulk-send [--item '{\"to\":\"...\",\"text\":\"...\"}'] [--items-file path] [--stdin-json]")
 	}
 
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/bulk_send", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/bulk_send", map[string]any{
 		"items":       items,
 		"interval_ms": *intervalMS,
 	}, &response); err != nil {
-		die("bulk-send: %v", err)
+		e.die("bulk-send: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdMedia(args []string) {
+func (e *Env) cmdMedia(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli media <download>")
+		e.die("usage: wacli media <download>")
 	}
 	switch args[0] {
 	case "download":
-		cmdMediaDownload(args[1:])
+		e.cmdMediaDownload(args[1:])
 	default:
-		die("usage: wacli media <download>")
+		e.die("usage: wacli media <download>")
 	}
 }
 
-func cmdMediaDownload(args []string) {
-	fs := flag.NewFlagSet("media download", flag.ExitOnError)
+func (e *Env) cmdMediaDownload(args []string) {
+	fs := e.newFlagSet("media download")
 	chatRef := fs.String("chat", "", "chat name, phone, chat ID, or JID")
 	messageID := fs.String("message-id", "", "message id")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	if strings.TrimSpace(*chatRef) == "" || strings.TrimSpace(*messageID) == "" {
-		die("usage: wacli media download --chat <reference> --message-id <id>")
+		e.die("usage: wacli media download --chat <reference> --message-id <id>")
 	}
 
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/media/download", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/media/download", map[string]any{
 		"chat_ref":   strings.TrimSpace(*chatRef),
 		"message_id": strings.TrimSpace(*messageID),
 	}, &response); err != nil {
-		die("media download: %v", err)
+		e.die("media download: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdWebhooks(args []string) {
+func (e *Env) cmdWebhooks(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
+		e.die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
 	}
 	switch args[0] {
 	case "list":
 		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/webhooks", nil, &response); err != nil {
-			die("webhooks list: %v", err)
+		if err := e.callAPI(http.MethodGet, "/webhooks", nil, &response); err != nil {
+			e.die("webhooks list: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "logs", "deliveries":
-		cmdWebhookLogs(args[1:])
+		e.cmdWebhookLogs(args[1:])
 	case "add":
-		cmdWebhooksAdd(args[1:])
+		e.cmdWebhooksAdd(args[1:])
 	case "remove", "rm", "delete":
-		cmdWebhooksRemove(args[1:])
+		e.cmdWebhooksRemove(args[1:])
 	case "test":
-		cmdWebhooksTest(args[1:])
+		e.cmdWebhooksTest(args[1:])
 	case "replay":
-		cmdWebhooksReplay(args[1:])
+		e.cmdWebhooksReplay(args[1:])
 	default:
-		die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
+		e.die("usage: wacli webhooks <list|add|remove|test|replay|deliveries>")
 	}
 }
 
 // cmdWebhooksTest fires a synthetic event so an endpoint can be verified before a real one arrives.
-func cmdWebhooksTest(args []string) {
-	fs := flag.NewFlagSet("webhooks test", flag.ExitOnError)
+func (e *Env) cmdWebhooksTest(args []string) {
+	fs := e.newFlagSet("webhooks test")
 	id := fs.Int64("id", 0, "webhook ID")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	if *id == 0 && fs.NArg() > 0 {
 		*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
 	}
 	if *id == 0 {
-		die("usage: wacli webhooks test <id>")
+		e.die("usage: wacli webhooks test <id>")
 	}
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/webhooks/test", map[string]any{"id": *id}, &response); err != nil {
-		die("webhooks test: %v", err)
+	if err := e.callAPI(http.MethodPost, "/webhooks/test", map[string]any{"id": *id}, &response); err != nil {
+		e.die("webhooks test: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
 // cmdWebhooksReplay re-sends a delivery that is already on disk.
-func cmdWebhooksReplay(args []string) {
-	fs := flag.NewFlagSet("webhooks replay", flag.ExitOnError)
+func (e *Env) cmdWebhooksReplay(args []string) {
+	fs := e.newFlagSet("webhooks replay")
 	id := fs.Int64("id", 0, "delivery ID, from `wacli webhooks deliveries`")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	if *id == 0 && fs.NArg() > 0 {
 		*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
 	}
 	if *id == 0 {
-		die("usage: wacli webhooks replay <delivery-id>")
+		e.die("usage: wacli webhooks replay <delivery-id>")
 	}
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/webhook_deliveries/replay", map[string]any{"id": *id}, &response); err != nil {
-		die("webhooks replay: %v", err)
+	if err := e.callAPI(http.MethodPost, "/webhook_deliveries/replay", map[string]any{"id": *id}, &response); err != nil {
+		e.die("webhooks replay: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdWebhooksAdd(args []string) {
-	fs := flag.NewFlagSet("webhooks add", flag.ExitOnError)
+func (e *Env) cmdWebhooksAdd(args []string) {
+	fs := e.newFlagSet("webhooks add")
 	urlValue := fs.String("url", "", "destination URL")
 	secret := fs.String("secret", "", "optional HMAC secret")
 	events := fs.String("events", "incoming_message", "comma-separated event names")
@@ -407,10 +409,10 @@ func cmdWebhooksAdd(args []string) {
 	includeMentions := fs.Bool("include-mentions", false, "also deliver messages from chats outside the scope when this account is @-mentioned")
 	var chats stringListFlag
 	fs.Var(&chats, "chat", "chat reference to subscribe; repeat for multiple chats")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	if strings.TrimSpace(*urlValue) == "" {
-		die("usage: wacli webhooks add --url <url> [--chat <ref> ...|--scope all_unlocked] [--events ...] [--message-types ...]")
+		e.die("usage: wacli webhooks add --url <url> [--chat <ref> ...|--scope all_unlocked] [--events ...] [--message-types ...]")
 	}
 	webhookScope := strings.TrimSpace(*scope)
 	if webhookScope == "" {
@@ -422,7 +424,7 @@ func cmdWebhooksAdd(args []string) {
 	}
 
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/webhooks", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/webhooks", map[string]any{
 		"url":              strings.TrimSpace(*urlValue),
 		"secret":           strings.TrimSpace(*secret),
 		"events":           splitCSV(*events),
@@ -433,30 +435,30 @@ func cmdWebhooksAdd(args []string) {
 		"enabled":          !*disabled,
 		"include_mentions": *includeMentions,
 	}, &response); err != nil {
-		die("webhooks add: %v", err)
+		e.die("webhooks add: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdWebhooksRemove(args []string) {
+func (e *Env) cmdWebhooksRemove(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli webhooks remove <id>")
+		e.die("usage: wacli webhooks remove <id>")
 	}
 	id := strings.TrimSpace(args[0])
 	var response map[string]any
-	if err := callLocalAPI(http.MethodDelete, "/webhooks/"+url.PathEscape(id), nil, &response); err != nil {
-		die("webhooks remove: %v", err)
+	if err := e.callAPI(http.MethodDelete, "/webhooks/"+url.PathEscape(id), nil, &response); err != nil {
+		e.die("webhooks remove: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdWebhookLogs(args []string) {
-	fs := flag.NewFlagSet("webhooks logs", flag.ExitOnError)
+func (e *Env) cmdWebhookLogs(args []string) {
+	fs := e.newFlagSet("webhooks logs")
 	limit := fs.Int("limit", 100, "maximum delivery logs to return")
 	status := fs.String("status", "", "pending|done|failed")
 	event := fs.String("event", "", "incoming_message|outgoing_message|...")
 	queryText := fs.String("query", "", "search by URL, chat jid, message id, or error text")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	query := url.Values{}
 	query.Set("limit", strconv.Itoa(*limit))
@@ -470,34 +472,34 @@ func cmdWebhookLogs(args []string) {
 		query.Set("query", strings.TrimSpace(*queryText))
 	}
 	var response map[string]any
-	if err := callLocalAPIQuery(http.MethodGet, "/webhook_deliveries", query, nil, &response); err != nil {
-		die("webhooks logs: %v", err)
+	if err := e.callAPIQuery(http.MethodGet, "/webhook_deliveries", query, nil, &response); err != nil {
+		e.die("webhooks logs: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdAutoReplies(args []string) {
+func (e *Env) cmdAutoReplies(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli auto-replies <list|add|remove>")
+		e.die("usage: wacli auto-replies <list|add|remove>")
 	}
 	switch args[0] {
 	case "list":
 		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/auto_replies", nil, &response); err != nil {
-			die("auto-replies list: %v", err)
+		if err := e.callAPI(http.MethodGet, "/auto_replies", nil, &response); err != nil {
+			e.die("auto-replies list: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "add":
-		cmdAutoRepliesAdd(args[1:])
+		e.cmdAutoRepliesAdd(args[1:])
 	case "remove", "rm", "delete":
-		cmdAutoRepliesRemove(args[1:])
+		e.cmdAutoRepliesRemove(args[1:])
 	default:
-		die("usage: wacli auto-replies <list|add|remove>")
+		e.die("usage: wacli auto-replies <list|add|remove>")
 	}
 }
 
-func cmdAutoRepliesAdd(args []string) {
-	fs := flag.NewFlagSet("auto-replies add", flag.ExitOnError)
+func (e *Env) cmdAutoRepliesAdd(args []string) {
+	fs := e.newFlagSet("auto-replies add")
 	name := fs.String("name", "", "rule name")
 	matchType := fs.String("match-type", "contains", "always|exact|contains|prefix|suffix|regex")
 	pattern := fs.String("pattern", "", "match pattern")
@@ -507,14 +509,14 @@ func cmdAutoRepliesAdd(args []string) {
 	dms := fs.Bool("dms", true, "apply to DMs")
 	groups := fs.Bool("groups", false, "apply to groups")
 	priority := fs.Int("priority", 100, "lower values run earlier")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	if strings.TrimSpace(*name) == "" {
-		die("usage: wacli auto-replies add --name <name> [--match-type ...] [--pattern ...] [--reply-text ...]")
+		e.die("usage: wacli auto-replies add --name <name> [--match-type ...] [--pattern ...] [--reply-text ...]")
 	}
 
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/auto_replies", map[string]any{
+	if err := e.callAPI(http.MethodPost, "/auto_replies", map[string]any{
 		"name":            strings.TrimSpace(*name),
 		"match_type":      strings.TrimSpace(*matchType),
 		"pattern":         *pattern,
@@ -525,58 +527,51 @@ func cmdAutoRepliesAdd(args []string) {
 		"apply_to_groups": *groups,
 		"priority":        *priority,
 	}, &response); err != nil {
-		die("auto-replies add: %v", err)
+		e.die("auto-replies add: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdAutoRepliesRemove(args []string) {
+func (e *Env) cmdAutoRepliesRemove(args []string) {
 	if len(args) == 0 {
-		die("usage: wacli auto-replies remove <id>")
+		e.die("usage: wacli auto-replies remove <id>")
 	}
 	id := strings.TrimSpace(args[0])
 	var response map[string]any
-	if err := callLocalAPI(http.MethodDelete, "/auto_replies/"+url.PathEscape(id), nil, &response); err != nil {
-		die("auto-replies remove: %v", err)
+	if err := e.callAPI(http.MethodDelete, "/auto_replies/"+url.PathEscape(id), nil, &response); err != nil {
+		e.die("auto-replies remove: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }
 
-func cmdAPI(args []string) {
-	fs := flag.NewFlagSet("api", flag.ExitOnError)
+func (e *Env) cmdAPI(args []string) {
+	fs := e.newFlagSet("api")
 	bodyFile := fs.String("body-file", "", "read JSON body from file")
 	stdinJSON := fs.Bool("stdin-json", false, "read JSON body from stdin")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 
 	if fs.NArg() < 2 {
-		die("usage: wacli api [--body-file path|--stdin-json] <METHOD> </path> [json-body]")
+		e.die("usage: wacli api [--body-file path|--stdin-json] <METHOD> </path> [json-body]")
 	}
 	method := strings.ToUpper(strings.TrimSpace(fs.Arg(0)))
 	path := strings.TrimSpace(fs.Arg(1))
 	if path == "" {
-		die("api path is required")
+		e.die("api path is required")
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 
-	body, err := loadOptionalJSONBody(fs.Args()[2:], *bodyFile, *stdinJSON)
+	body, err := e.loadOptionalJSONBody(fs.Args()[2:], *bodyFile, *stdinJSON)
 	if err != nil {
-		die("api body: %v", err)
+		e.die("api body: %v", err)
 	}
 
 	var response any
-	if err := callLocalAPI(method, path, body, &response); err != nil {
-		die("api %s %s: %v", method, path, err)
+	if err := e.callAPI(method, path, body, &response); err != nil {
+		e.die("api %s %s: %v", method, path, err)
 	}
-	prettyPrintJSON(response)
-}
-
-func callLocalAPIQuery(method, path string, query url.Values, body any, out any) error {
-	if len(query) > 0 {
-		path = path + "?" + query.Encode()
-	}
-	return callLocalAPI(method, path, body, out)
+	e.printJSON(response)
 }
 
 func parseBulkSendInput(data []byte) ([]wa.BulkSendItem, error) {
@@ -690,11 +685,13 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	return seen
 }
 
-func readAllStdin() ([]byte, error) {
-	return os.ReadFile("/dev/stdin")
+// readAllStdin drains the host's stdin. Reading /dev/stdin worked when the only host was a shell;
+// Env.In makes it work anywhere, and yields empty rather than failing where there is no stdin.
+func (e *Env) readAllStdin() ([]byte, error) {
+	return io.ReadAll(e.stdin())
 }
 
-func loadOptionalJSONBody(args []string, bodyFile string, stdinJSON bool) (any, error) {
+func (e *Env) loadOptionalJSONBody(args []string, bodyFile string, stdinJSON bool) (any, error) {
 	if strings.TrimSpace(bodyFile) != "" {
 		data, err := os.ReadFile(strings.TrimSpace(bodyFile))
 		if err != nil {
@@ -703,7 +700,7 @@ func loadOptionalJSONBody(args []string, bodyFile string, stdinJSON bool) (any, 
 		return decodeArbitraryJSON(data)
 	}
 	if stdinJSON {
-		data, err := readAllStdin()
+		data, err := e.readAllStdin()
 		if err != nil {
 			return nil, err
 		}
@@ -728,7 +725,7 @@ func decodeArbitraryJSON(data []byte) (any, error) {
 }
 
 // cmdGroups manages WhatsApp groups.
-func cmdGroups(args []string) {
+func (e *Env) cmdGroups(args []string) {
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -736,62 +733,62 @@ func cmdGroups(args []string) {
 	switch sub {
 	case "list":
 		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/groups", nil, &response); err != nil {
-			die("groups: %v", err)
+		if err := e.callAPI(http.MethodGet, "/groups", nil, &response); err != nil {
+			e.die("groups: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "info":
-		fs := flag.NewFlagSet("groups info", flag.ExitOnError)
+		fs := e.newFlagSet("groups info")
 		group := fs.String("group", "", "group JID or name")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *group == "" && fs.NArg() > 0 {
 			*group = fs.Arg(0)
 		}
 		if *group == "" {
-			die("usage: wacli groups info <group>")
+			e.die("usage: wacli groups info <group>")
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/groups?ref="+url.QueryEscape(*group), nil, &response); err != nil {
-			die("groups info: %v", err)
+		if err := e.callAPI(http.MethodGet, "/groups?ref="+url.QueryEscape(*group), nil, &response); err != nil {
+			e.die("groups info: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "create":
-		fs := flag.NewFlagSet("groups create", flag.ExitOnError)
+		fs := e.newFlagSet("groups create")
 		name := fs.String("name", "", "group name")
 		members := fs.String("members", "", "comma-separated phones, JIDs or contact names")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *name == "" || *members == "" {
-			die("usage: wacli groups create --name <name> --members <a,b,c>")
+			e.die("usage: wacli groups create --name <name> --members <a,b,c>")
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/groups",
+		if err := e.callAPI(http.MethodPost, "/groups",
 			map[string]any{"name": *name, "participants": splitCommaList(*members)}, &response); err != nil {
-			die("groups create: %v", err)
+			e.die("groups create: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "add", "remove", "promote", "demote":
-		fs := flag.NewFlagSet("groups "+sub, flag.ExitOnError)
+		fs := e.newFlagSet("groups " + sub)
 		group := fs.String("group", "", "group JID or name")
 		members := fs.String("members", "", "comma-separated participants")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *group == "" || *members == "" {
-			die("usage: wacli groups %s --group <group> --members <a,b>", sub)
+			e.die("usage: wacli groups %s --group <group> --members <a,b>", sub)
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/groups/participants", map[string]any{
+		if err := e.callAPI(http.MethodPost, "/groups/participants", map[string]any{
 			"group": *group, "action": sub, "participants": splitCommaList(*members),
 		}, &response); err != nil {
-			die("groups %s: %v", sub, err)
+			e.die("groups %s: %v", sub, err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "rename":
-		fs := flag.NewFlagSet("groups rename", flag.ExitOnError)
+		fs := e.newFlagSet("groups rename")
 		group := fs.String("group", "", "group JID or name")
 		name := fs.String("name", "", "new name")
 		topic := fs.String("topic", "", "new topic/description")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *group == "" || (*name == "" && *topic == "") {
-			die("usage: wacli groups rename --group <group> [--name <name>] [--topic <topic>]")
+			e.die("usage: wacli groups rename --group <group> [--name <name>] [--topic <topic>]")
 		}
 		body := map[string]any{"group": *group}
 		if *name != "" {
@@ -800,83 +797,83 @@ func cmdGroups(args []string) {
 			body["topic"] = *topic
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/groups/update", body, &response); err != nil {
-			die("groups rename: %v", err)
+		if err := e.callAPI(http.MethodPost, "/groups/update", body, &response); err != nil {
+			e.die("groups rename: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "invite":
-		fs := flag.NewFlagSet("groups invite", flag.ExitOnError)
+		fs := e.newFlagSet("groups invite")
 		group := fs.String("group", "", "group JID or name")
 		reset := fs.Bool("reset", false, "revoke the old link and issue a new one")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *group == "" && fs.NArg() > 0 {
 			*group = fs.Arg(0)
 		}
 		if *group == "" {
-			die("usage: wacli groups invite <group> [--reset]")
+			e.die("usage: wacli groups invite <group> [--reset]")
 		}
 		q := "/groups/invite?group=" + url.QueryEscape(*group)
 		if *reset {
 			q += "&reset=true"
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, q, nil, &response); err != nil {
-			die("groups invite: %v", err)
+		if err := e.callAPI(http.MethodGet, q, nil, &response); err != nil {
+			e.die("groups invite: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "join":
-		fs := flag.NewFlagSet("groups join", flag.ExitOnError)
+		fs := e.newFlagSet("groups join")
 		link := fs.String("link", "", "invite link or code")
 		preview := fs.Bool("preview", false, "look without joining")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *link == "" && fs.NArg() > 0 {
 			*link = fs.Arg(0)
 		}
 		if *link == "" {
-			die("usage: wacli groups join <link> [--preview]")
+			e.die("usage: wacli groups join <link> [--preview]")
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/groups/invite",
+		if err := e.callAPI(http.MethodPost, "/groups/invite",
 			map[string]any{"link": *link, "preview": *preview}, &response); err != nil {
-			die("groups join: %v", err)
+			e.die("groups join: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	case "leave":
-		fs := flag.NewFlagSet("groups leave", flag.ExitOnError)
+		fs := e.newFlagSet("groups leave")
 		group := fs.String("group", "", "group JID or name")
-		_ = fs.Parse(args)
+		e.mustParse(fs, args)
 		if *group == "" && fs.NArg() > 0 {
 			*group = fs.Arg(0)
 		}
 		if *group == "" {
-			die("usage: wacli groups leave <group>")
+			e.die("usage: wacli groups leave <group>")
 		}
 		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/groups/update",
+		if err := e.callAPI(http.MethodPost, "/groups/update",
 			map[string]any{"group": *group, "leave": true}, &response); err != nil {
-			die("groups leave: %v", err)
+			e.die("groups leave: %v", err)
 		}
-		prettyPrintJSON(response)
+		e.printJSON(response)
 	default:
-		die("unknown groups subcommand %q (want: list, info, create, add, remove, promote, demote, rename, invite, join, leave)", sub)
+		e.die("unknown groups subcommand %q (want: list, info, create, add, remove, promote, demote, rename, invite, join, leave)", sub)
 	}
 }
 
 // cmdCheckNumbers reports which phone numbers have WhatsApp.
-func cmdCheckNumbers(args []string) {
-	fs := flag.NewFlagSet("check", flag.ExitOnError)
+func (e *Env) cmdCheckNumbers(args []string) {
+	fs := e.newFlagSet("check")
 	phones := fs.String("phones", "", "comma-separated phone numbers")
-	_ = fs.Parse(args)
+	e.mustParse(fs, args)
 	list := splitCommaList(*phones)
 	if len(list) == 0 {
 		list = fs.Args()
 	}
 	if len(list) == 0 {
-		die("usage: wacli check +15551234567,+15559876543")
+		e.die("usage: wacli check +15551234567,+15559876543")
 	}
 	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/contacts/check", map[string]any{"phones": list}, &response); err != nil {
-		die("check: %v", err)
+	if err := e.callAPI(http.MethodPost, "/contacts/check", map[string]any{"phones": list}, &response); err != nil {
+		e.die("check: %v", err)
 	}
-	prettyPrintJSON(response)
+	e.printJSON(response)
 }

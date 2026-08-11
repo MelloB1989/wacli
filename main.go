@@ -2,20 +2,17 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/MelloB1989/wacli/cli"
 	wa "github.com/MelloB1989/wacli/wa"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,76 +34,43 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println("wacli", version)
 		return
+	// These four need the process itself: a terminal to draw on, signals to wait for, or exclusive
+	// use of the database. Everything else is a client command and lives in the cli package, which
+	// the mobile bindings run too.
 	case "login":
 		cmdLogin(os.Args[2:])
 	case "daemon":
 		cmdDaemon()
-	case "sync":
-		cmdSync()
-	case "status":
-		cmdStatus()
 	case "tui":
 		cmdTUI()
-	case "dnd":
-		cmdDND(os.Args[2:])
-	case "chats":
-		cmdChats(os.Args[2:])
 	case "access":
 		cmdAccess(os.Args[2:])
-	case "send":
-		cmdSend(os.Args[2:])
-	case "edit":
-		cmdEdit(os.Args[2:])
-	case "delete":
-		cmdDelete(os.Args[2:])
-	case "receipts":
-		cmdReceipts(os.Args[2:])
-	case "bulk-send":
-		cmdBulkSend(os.Args[2:])
-	case "story":
-		cmdStory(os.Args[2:])
-	case "call":
-		cmdCall(os.Args[2:])
-	case "media":
-		cmdMedia(os.Args[2:])
-	case "resolve":
-		cmdResolve(os.Args[2:])
-	case "messages":
-		cmdMessages(os.Args[2:])
-	case "contacts":
-		cmdContacts(os.Args[2:])
-	case "webhooks":
-		cmdWebhooks(os.Args[2:])
-	case "groups", "group":
-		cmdGroups(os.Args[2:])
-	case "check":
-		cmdCheckNumbers(os.Args[2:])
-	case "triggers", "trigger":
-		cmdTriggers(os.Args[2:])
-	case "auto-replies", "autoreplies":
-		cmdAutoReplies(os.Args[2:])
-	case "api":
-		cmdAPI(os.Args[2:])
 	default:
-		usage()
+		runClientCommand(os.Args[1:])
 	}
 }
 
-// absPath resolves a user-supplied file path against the shell's working directory.
-//
-// Audio and recording paths are handed to the daemon as text over the local API, and the daemon
-// resolves what it receives against its own working directory — which is wherever it was started,
-// not where the command was typed. Making them absolute here keeps "--record peer.wav" meaning the
-// directory the user is standing in.
-func absPath(p string) string {
-	if p == "" {
-		return ""
+// newCLIEnv wires the client commands to this process: real stdio, a socket to the daemon, and a
+// local database to fall back on when no daemon answers.
+func newCLIEnv() *cli.Env {
+	return &cli.Env{
+		Out:       os.Stdout,
+		In:        os.Stdin,
+		Transport: cli.NewSocketTransport(20 * time.Second),
+		OpenStore: func() (*wa.Store, error) { return wa.OpenStore(wa.AppDBPath) },
 	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return p
+}
+
+// runClientCommand turns the package's error return back into the exit status a shell expects.
+// Deciding to end the process belongs here, in the binary, and nowhere else.
+func runClientCommand(args []string) {
+	if err := newCLIEnv().Run(args); err != nil {
+		if errors.Is(err, cli.ErrUnknownCommand) {
+			usage()
+		}
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	return abs
 }
 
 func openStoreOrDie() *wa.Store {
@@ -647,145 +611,6 @@ func cmdDaemon() {
 	}
 }
 
-func cmdSync() {
-	store := openStoreOrDie()
-	defer store.Close()
-	service := newServiceOrDie(store)
-	defer service.Close()
-
-	if err := service.Connect(); err != nil {
-		die("%v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-
-	marker := service.HistoryMarker()
-	if err := service.RequestHistorySync(ctx, 100); err != nil {
-		if errors.Is(err, wa.ErrHistoryAnchorUnavailable) {
-			fmt.Println("No local history anchor is available yet, so on-demand sync cannot be requested. Bootstrap sync only happens after login from the primary device.")
-		} else {
-			die("request history sync: %v", err)
-		}
-	}
-	seen := service.WaitForHistoryQuiet(marker, 40*time.Second, 4*time.Second)
-	if err := service.SyncContacts(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "contact sync failed: %v\n", err)
-	}
-	if err := service.RefreshMissingChatNames(ctx, 100); err != nil {
-		fmt.Fprintf(os.Stderr, "chat name refresh failed: %v\n", err)
-	}
-	status, err := store.BuildStatus(service.IsConnected(), service.CurrentUserJID())
-	if err != nil {
-		die("build status: %v", err)
-	}
-	fmt.Printf("Manual sync complete. Chats: %d, messages: %d, history seen: %v\n", status.ChatCount, status.MessageCount, seen)
-}
-
-func cmdStatus() {
-	var status wa.StatusSnapshot
-	if err := callLocalAPI(http.MethodGet, "/status", nil, &status); err == nil {
-		fmt.Printf("connected: %v\n", status.Connected)
-		fmt.Printf("user: %s\n", status.UserJID)
-		fmt.Printf("dnd: %v\n", status.DNDMode)
-		fmt.Printf("initial access configured: %v\n", status.InitialAccessConfigured)
-		fmt.Printf("chats: %d\n", status.ChatCount)
-		fmt.Printf("messages: %d\n", status.MessageCount)
-		if status.LastHistorySync != nil {
-			fmt.Printf("last history sync: %s\n", status.LastHistorySync.Format(time.RFC3339))
-		}
-		return
-	}
-
-	store := openStoreOrDie()
-	defer store.Close()
-	status, err := store.BuildStatus(false, "")
-	if err != nil {
-		die("status: %v", err)
-	}
-	fmt.Println("daemon: not reachable")
-	fmt.Printf("dnd: %v\n", status.DNDMode)
-	fmt.Printf("initial access configured: %v\n", status.InitialAccessConfigured)
-	fmt.Printf("chats: %d\n", status.ChatCount)
-	fmt.Printf("messages: %d\n", status.MessageCount)
-}
-
-func cmdDND(args []string) {
-	store := openStoreOrDie()
-	defer store.Close()
-
-	if len(args) == 0 {
-		enabled, err := store.GetDNDMode()
-		if err != nil {
-			die("dnd status: %v", err)
-		}
-		if enabled {
-			fmt.Println("DND mode: ON")
-		} else {
-			fmt.Println("DND mode: OFF")
-		}
-		return
-	}
-
-	switch strings.ToLower(strings.TrimSpace(args[0])) {
-	case "on":
-		if err := store.SetDNDMode(true); err != nil {
-			die("set dnd: %v", err)
-		}
-		fmt.Println("DND mode enabled")
-	case "off":
-		if err := store.SetDNDMode(false); err != nil {
-			die("set dnd: %v", err)
-		}
-		fmt.Println("DND mode disabled")
-	default:
-		die("usage: wacli dnd [on|off]")
-	}
-}
-
-func cmdChats(args []string) {
-	fs := flag.NewFlagSet("chats", flag.ExitOnError)
-	filter := fs.String("filter", "all", "all|locked|unlocked|groups|dms")
-	limit := fs.Int("limit", 200, "maximum number of chats to list")
-	query := fs.String("query", "", "search by name or jid")
-	asJSON := fs.Bool("json", false, "output chats as a JSON array (for tooling)")
-	_ = fs.Parse(args)
-
-	store := openStoreOrDie()
-	defer store.Close()
-	chats, err := store.ListChats(*filter, *limit, *query)
-	if err != nil {
-		die("list chats: %v", err)
-	}
-	if *asJSON {
-		out, err := json.MarshalIndent(chats, "", "  ")
-		if err != nil {
-			die("marshal chats: %v", err)
-		}
-		fmt.Println(string(out))
-		return
-	}
-	if len(chats) == 0 {
-		fmt.Println("No chats found.")
-		return
-	}
-	for _, chat := range chats {
-		state := "UNLOCKED"
-		if chat.Locked {
-			state = "LOCKED"
-		}
-		kind := "DM"
-		if chat.IsGroup {
-			kind = "GROUP"
-		}
-		fmt.Printf("[%s] %s (%s)\n", state, chat.Name, kind)
-		fmt.Printf("  JID: %s\n", chat.JID)
-		fmt.Printf("  Last Activity: %s\n", chat.LastMessageAt.Format("2006-01-02 15:04:05"))
-		if chat.LastMessagePreview != "" {
-			fmt.Printf("  Preview: %s\n", chat.LastMessagePreview)
-		}
-	}
-}
-
 func cmdAccess(args []string) {
 	if len(args) == 0 {
 		die("usage: wacli access <configure|list|lock|unlock>")
@@ -867,264 +692,6 @@ func cmdAccessSetLock(store *wa.Store, locked bool, args []string) {
 	} else {
 		fmt.Printf("Unlocked %d chat(s)\n", updated)
 	}
-}
-
-func cmdSend(args []string) {
-	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	to := fs.String("to", "", "recipient JID or phone number")
-	text := fs.String("text", "", "message text")
-	mediaPath := fs.String("media", "", "optional local media path")
-	replyTo := fs.String("reply-to", "", "message ID in the same chat to reply to (quotes it)")
-	_ = fs.Parse(args)
-	if *to == "" {
-		die("usage: wacli send --to <jid|phone> [--text <text>] [--media <path>] [--reply-to <message-id>]")
-	}
-	if *text == "" && fs.NArg() > 0 {
-		*text = strings.Join(fs.Args(), " ")
-	}
-
-	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/send", map[string]any{
-		"to":         *to,
-		"text":       *text,
-		"media_path": *mediaPath,
-		"reply_to":   *replyTo,
-	}, &response); err != nil {
-		die("send: %v", err)
-	}
-	prettyPrintJSON(response)
-}
-
-func cmdCall(args []string) {
-	sub := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
-	}
-	switch sub {
-	case "list":
-		fs := flag.NewFlagSet("call list", flag.ExitOnError)
-		activeOnly := fs.Bool("active", false, "only show calls that are still ringing or connected")
-		_ = fs.Parse(args)
-		path := "/calls"
-		if *activeOnly {
-			path += "?active=true"
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, path, nil, &response); err != nil {
-			die("call list: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "end", "hangup":
-		fs := flag.NewFlagSet("call end", flag.ExitOnError)
-		id := fs.String("id", "", "call ID to hang up")
-		reason := fs.String("reason", "", "termination reason (default: hangup)")
-		_ = fs.Parse(args)
-		if *id == "" {
-			die("usage: wacli call end --id <call-id> [--reason <reason>]")
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/calls/end", map[string]any{
-			"call_id": *id,
-			"reason":  *reason,
-		}, &response); err != nil {
-			die("call end: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "status":
-		fs := flag.NewFlagSet("call status", flag.ExitOnError)
-		_ = fs.Parse(args)
-		ref := ""
-		if fs.NArg() > 0 {
-			ref = fs.Arg(0)
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodGet,
-			"/calls/status?ref="+url.QueryEscape(ref), nil, &response); err != nil {
-			die("call status: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "queue":
-		fs := flag.NewFlagSet("call queue", flag.ExitOnError)
-		_ = fs.Parse(args)
-		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/calls/queue", nil, &response); err != nil {
-			die("call queue: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "capture":
-		fs := flag.NewFlagSet("call capture", flag.ExitOnError)
-		off := fs.Bool("off", false, "stop capturing")
-		_ = fs.Parse(args)
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/calls/capture", map[string]any{
-			"enabled": !*off,
-		}, &response); err != nil {
-			die("call capture: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "dump":
-		fs := flag.NewFlagSet("call dump", flag.ExitOnError)
-		last := fs.Int("last", 0, "only show the last N stanzas")
-		_ = fs.Parse(args)
-		records, err := wa.LoadCaptures(wa.CapturePath)
-		if err != nil {
-			die("call dump: %v", err)
-		}
-		if len(records) == 0 {
-			fmt.Println("no captured call stanzas yet — run 'wacli call capture' first, then make a call")
-			return
-		}
-		if *last > 0 && *last < len(records) {
-			records = records[len(records)-*last:]
-		}
-		for _, rec := range records {
-			fmt.Print(wa.DescribeCapture(rec))
-		}
-		fmt.Fprintf(os.Stderr, "\n%d stanza(s) from %s\n", len(records), wa.CapturePath)
-	case "answer":
-		fs := flag.NewFlagSet("call answer", flag.ExitOnError)
-		id := fs.String("id", "", "call ID to answer (default: the only ringing call)")
-		say := fs.String("say", "", "speak this text into the call")
-		voice := fs.String("voice", "", "voice for --say (see: say -v '?')")
-		audio := fs.String("audio", "", ".wav/.mp3/.opus to play instead of --say")
-		repeat := fs.Bool("repeat", false, "loop the audio instead of hanging up when it ends")
-		record := fs.String("record", "", "write the other party's voice to this .wav")
-		_ = fs.Parse(args)
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/calls/answer", map[string]any{
-			"call_id": *id,
-			"say":     *say,
-			"voice":   *voice,
-			"audio":   absPath(*audio),
-			"repeat":  *repeat,
-			"record":  absPath(*record),
-		}, &response); err != nil {
-			die("call answer: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "reject", "decline":
-		fs := flag.NewFlagSet("call reject", flag.ExitOnError)
-		id := fs.String("id", "", "call ID to decline")
-		_ = fs.Parse(args)
-		if *id == "" {
-			die("usage: wacli call reject --id <call-id>")
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/calls/reject", map[string]any{
-			"call_id": *id,
-		}, &response); err != nil {
-			die("call reject: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "", "place", "dial":
-		fs := flag.NewFlagSet("call", flag.ExitOnError)
-		to := fs.String("to", "", "recipient JID or phone number")
-		video := fs.Bool("video", false, "place a video call instead of a voice call")
-		ringFor := fs.Int("ring-for", 0, "seconds to ring before hanging up automatically (default 45)")
-		noExpire := fs.Bool("no-expire", false, "keep ringing until explicitly ended")
-		say := fs.String("say", "", "speak this text once they answer")
-		voice := fs.String("voice", "", "voice for --say (see: say -v '?')")
-		audio := fs.String("audio", "", ".wav/.mp3/.opus to play instead of --say")
-		repeat := fs.Bool("repeat", false, "loop the audio instead of hanging up when it ends")
-		record := fs.String("record", "", "write the other party's voice to this .wav")
-		_ = fs.Parse(args)
-		if *to == "" && fs.NArg() > 0 {
-			*to = fs.Arg(0)
-		}
-		if *to == "" {
-			die("usage: wacli call --to <jid|phone> [--say <text> | --audio <file>] [--video]")
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/calls", map[string]any{
-			"to":               *to,
-			"video":            *video,
-			"ring_for_seconds": *ringFor,
-			"no_expire":        *noExpire,
-			"say":              *say,
-			"voice":            *voice,
-			"audio":            absPath(*audio),
-			"repeat":           *repeat,
-			"record":           absPath(*record),
-		}, &response); err != nil {
-			die("call: %v", err)
-		}
-		prettyPrintJSON(response)
-		if *say == "" && *audio == "" {
-			fmt.Fprintln(os.Stderr, "note: no --say/--audio, so this call rings but carries no audio.")
-		}
-	default:
-		die("unknown call subcommand %q (want: place, answer, status, queue, list, end, reject, capture, dump)", sub)
-	}
-}
-
-func cmdStory(args []string) {
-	fs := flag.NewFlagSet("story", flag.ExitOnError)
-	text := fs.String("text", "", "story text")
-	mediaPath := fs.String("media", "", "optional image/video path")
-	_ = fs.Parse(args)
-	var response map[string]any
-	if err := callLocalAPI(http.MethodPost, "/stories", map[string]any{
-		"text":       *text,
-		"media_path": *mediaPath,
-	}, &response); err != nil {
-		die("story: %v", err)
-	}
-	prettyPrintJSON(response)
-}
-
-func callLocalAPI(method, path string, body any, out any) error {
-	return callLocalAPIWithTimeout(method, path, body, out, 20*time.Second)
-}
-
-func callLocalAPIWithTimeout(method, path string, body any, out any, timeout time.Duration) error {
-	var reader *bytes.Reader
-	if body == nil {
-		reader = bytes.NewReader(nil)
-	} else {
-		payload, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequest(method, "http://"+wa.HTTPAddr+path, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if timeout <= 0 {
-		timeout = 20 * time.Second
-	}
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		var payload map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
-			if msg, ok := payload["error"].(string); ok {
-				return errors.New(msg)
-			}
-		}
-		return fmt.Errorf("request failed with status %d", resp.StatusCode)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
-}
-
-func prettyPrintJSON(value any) {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		fmt.Printf("%v\n", value)
-		return
-	}
-	fmt.Println(string(data))
 }
 
 func errorsIsEOF(err error) bool {
@@ -1235,139 +802,4 @@ notes:
 func die(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
-}
-
-// cmdTriggers manages the rule engine: match an event, run actions. See wa/triggers.go.
-func cmdTriggers(args []string) {
-	sub := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
-	}
-	switch sub {
-	case "", "list":
-		var response map[string]any
-		if err := callLocalAPI(http.MethodGet, "/triggers", nil, &response); err != nil {
-			die("triggers: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "add":
-		fs := flag.NewFlagSet("triggers add", flag.ExitOnError)
-		name := fs.String("name", "", "rule name")
-		match := fs.String("match", "contains", "always|contains|exact|prefix|suffix|regex")
-		pattern := fs.String("pattern", "", "text to match")
-		scope := fs.String("scope", "all", "all|dms|groups|list")
-		chats := fs.String("chats", "", "comma-separated chat JIDs when --scope=list")
-		events := fs.String("events", "", "comma-separated event kinds (default incoming_message)")
-		reply := fs.String("reply", "", "send this text when it matches")
-		media := fs.String("media", "", "send this file when it matches")
-		react := fs.String("react", "", "react with this emoji")
-		forward := fs.String("forward", "", "forward the message to this chat")
-		hook := fs.String("webhook", "", "POST the event to this URL")
-		markRead := fs.Bool("mark-read", false, "mark the chat read")
-		priority := fs.Int("priority", 100, "evaluation order, lowest first")
-		cooldown := fs.Int("cooldown", 0, "seconds to wait before this rule may fire again per chat")
-		keepGoing := fs.Bool("continue", false, "let lower-priority rules run too")
-		_ = fs.Parse(args)
-		if *name == "" {
-			die("usage: wacli triggers add --name <name> [--match ...] [--pattern ...] --reply <text>")
-		}
-		actions := []map[string]any{}
-		if *reply != "" {
-			actions = append(actions, map[string]any{"type": "send_text", "text": *reply})
-		}
-		if *media != "" {
-			actions = append(actions, map[string]any{"type": "send_media", "media_path": absPath(*media), "text": *reply})
-		}
-		if *react != "" {
-			actions = append(actions, map[string]any{"type": "react", "emoji": *react})
-		}
-		if *forward != "" {
-			actions = append(actions, map[string]any{"type": "forward", "to": *forward})
-		}
-		if *hook != "" {
-			actions = append(actions, map[string]any{"type": "webhook", "url": *hook})
-		}
-		if *markRead {
-			actions = append(actions, map[string]any{"type": "mark_read"})
-		}
-		if len(actions) == 0 {
-			die("a trigger needs at least one action (--reply, --media, --react, --forward, --webhook, --mark-read)")
-		}
-		body := map[string]any{
-			"name": *name, "enabled": true, "priority": *priority,
-			"match_type": *match, "pattern": *pattern, "scope": *scope,
-			"actions": actions, "stop_on_match": !*keepGoing, "cooldown_seconds": *cooldown,
-		}
-		if *chats != "" {
-			body["chat_jids"] = splitCommaList(*chats)
-		}
-		if *events != "" {
-			body["events"] = splitCommaList(*events)
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/triggers", body, &response); err != nil {
-			die("triggers add: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "enable", "disable":
-		fs := flag.NewFlagSet("triggers "+sub, flag.ExitOnError)
-		id := fs.Int64("id", 0, "trigger ID")
-		_ = fs.Parse(args)
-		if *id == 0 && fs.NArg() > 0 {
-			*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
-		}
-		if *id == 0 {
-			die("usage: wacli triggers %s <id>", sub)
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPatch, fmt.Sprintf("/triggers/%d", *id),
-			map[string]any{"enabled": sub == "enable"}, &response); err != nil {
-			die("triggers %s: %v", sub, err)
-		}
-		prettyPrintJSON(response)
-	case "remove", "delete":
-		fs := flag.NewFlagSet("triggers remove", flag.ExitOnError)
-		id := fs.Int64("id", 0, "trigger ID")
-		_ = fs.Parse(args)
-		if *id == 0 && fs.NArg() > 0 {
-			*id, _ = strconv.ParseInt(fs.Arg(0), 10, 64)
-		}
-		if *id == 0 {
-			die("usage: wacli triggers remove <id>")
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodDelete, fmt.Sprintf("/triggers/%d", *id), nil, &response); err != nil {
-			die("triggers remove: %v", err)
-		}
-		prettyPrintJSON(response)
-	case "test":
-		fs := flag.NewFlagSet("triggers test", flag.ExitOnError)
-		id := fs.Int64("id", 0, "trigger ID")
-		chat := fs.String("chat", "", "chat to test against")
-		text := fs.String("text", "", "message text to test")
-		_ = fs.Parse(args)
-		if *id == 0 {
-			die("usage: wacli triggers test --id <id> --chat <ref> --text <message>")
-		}
-		var response map[string]any
-		if err := callLocalAPI(http.MethodPost, "/triggers/test",
-			map[string]any{"id": *id, "chat": *chat, "text": *text}, &response); err != nil {
-			die("triggers test: %v", err)
-		}
-		prettyPrintJSON(response)
-	default:
-		die("unknown triggers subcommand %q (want: list, add, enable, disable, remove, test)", sub)
-	}
-}
-
-// splitCommaList turns "a,b, c" into []string{"a","b","c"}.
-func splitCommaList(value string) []string {
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
