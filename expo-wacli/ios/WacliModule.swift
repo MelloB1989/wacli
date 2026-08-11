@@ -76,6 +76,14 @@ public class WacliModule: Module {
       try MobileRequest(method, path, body ?? "")
     }
 
+    AsyncFunction("exec") { (line: String) throws -> String in
+      try MobileExec(line)
+    }
+
+    AsyncFunction("execCommands") { () -> String in
+      MobileExecCommands()
+    }
+
     AsyncFunction("loginWithQR") { () throws in
       try self.ensureConfigured()
       try MobileStartLogin(self.loginBridge())

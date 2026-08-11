@@ -75,6 +75,10 @@ class WacliModule : Module() {
       Mobile.request(method, path, body ?: "")
     }
 
+    AsyncFunction("exec") { line: String -> Mobile.exec(line) }
+
+    AsyncFunction("execCommands") { Mobile.execCommands() }
+
     AsyncFunction("loginWithQR") {
       ensureConfigured()
       Mobile.startLogin(loginHandler())

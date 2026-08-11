@@ -33,6 +33,34 @@ export async function request<T = unknown>(
   return JSON.parse(raw) as T;
 }
 
+/**
+ * Run a wacli command line and return everything it printed.
+ *
+ * This is the same command layer the `wacli` binary runs, so the syntax is the documented CLI
+ * syntax and every client command works here — including the ones no helper below covers:
+ *
+ * ```ts
+ * await exec('chats --filter groups --limit 5');
+ * await exec('triggers list');
+ * await exec(`api POST /dnd '{"enabled":true}'`);
+ * ```
+ *
+ * Words are split shell-style, so an argument containing spaces needs quoting, and a JSON body
+ * needs single quotes to survive — exactly as it would in a terminal.
+ *
+ * A command that fails reports into the returned text rather than rejecting, the way a shell prints
+ * to stderr; the promise rejects only when the line could not run at all.
+ */
+export function exec(line: string): Promise<string> {
+  return WacliModule.exec(line);
+}
+
+/** The client command names, for completion. Sourced from the binary, so it cannot drift. */
+export async function execCommands(): Promise<string[]> {
+  const raw = await WacliModule.execCommands();
+  return raw.split('\n').filter(Boolean);
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------

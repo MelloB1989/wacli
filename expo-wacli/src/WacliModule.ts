@@ -21,6 +21,13 @@ declare class WacliNativeModule extends NativeModule<WacliModuleEvents> {
    * message. Prefer the typed helpers in `index.ts`; reach for this for routes they don't cover.
    */
   request(method: string, path: string, body: string | null): Promise<string>;
+  /**
+   * Run a wacli command line and return everything it printed. This is the same command layer the
+   * `wacli` binary runs, so the syntax is exactly the documented CLI syntax.
+   */
+  exec(line: string): Promise<string>;
+  /** The client command names, newline-separated. For completion, so no list has to be hardcoded. */
+  execCommands(): Promise<string>;
   /** Begin QR pairing. Progress arrives on the `onLoginQRCode` / `onLoginStatus` events. */
   loginWithQR(): Promise<void>;
   /** Begin pairing-code login for a phone number in international format. */

@@ -7,9 +7,10 @@ import type { ChatRecord } from 'expo-wacli';
 
 import { ChatScreen } from './src/screens/ChatScreen';
 import { ChatsScreen } from './src/screens/ChatsScreen';
+import { ConsoleScreen } from './src/screens/ConsoleScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { errorMessage } from './src/format';
-import { space, theme } from './src/theme';
+import { radius, space, theme } from './src/theme';
 
 /**
  * expo-wacli demo.
@@ -21,8 +22,15 @@ type Screen =
   | { name: 'booting' }
   | { name: 'failed'; message: string }
   | { name: 'login' }
-  | { name: 'chats' }
+  // One member rather than two, so a tab can be selected by name without widening complaints.
+  | { name: 'chats' | 'console' }
   | { name: 'chat'; chat: ChatRecord };
+
+/** The tabs are the two things worth having side by side: the app view and the raw one. */
+const TABS = [
+  { name: 'chats', label: 'Chats' },
+  { name: 'console', label: 'Console' },
+] as const;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'booting' });
@@ -77,8 +85,32 @@ export default function App() {
           />
         )}
 
-        {screen.name === 'chats' && (
-          <ChatsScreen onOpenChat={(chat) => setScreen({ name: 'chat', chat })} />
+        {/* Both tabs stay mounted so switching away does not throw away console scrollback or the
+            chat list's scroll position. */}
+        {(screen.name === 'chats' || screen.name === 'console') && (
+          <>
+            <View style={[styles.tabBody, screen.name !== 'chats' && styles.hidden]}>
+              <ChatsScreen onOpenChat={(chat) => setScreen({ name: 'chat', chat })} />
+            </View>
+            <View style={[styles.tabBody, screen.name !== 'console' && styles.hidden]}>
+              <ConsoleScreen />
+            </View>
+            <View style={styles.tabBar}>
+              {TABS.map((tab) => (
+                <Pressable
+                  key={tab.name}
+                  style={[styles.tab, screen.name === tab.name && styles.tabActive]}
+                  onPress={() => setScreen({ name: tab.name })}
+                >
+                  <Text
+                    style={[styles.tabText, screen.name === tab.name && styles.tabTextActive]}
+                  >
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
         )}
 
         {screen.name === 'chat' && (
@@ -103,4 +135,25 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   retryText: { color: theme.accentText, fontWeight: '700' },
+
+  tabBody: { flex: 1 },
+  // display:none rather than unmounting — see the note at the call site.
+  hidden: { display: 'none' },
+  tabBar: {
+    flexDirection: 'row',
+    gap: space.sm,
+    padding: space.sm,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.surface,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: space.sm,
+    borderRadius: radius.sm,
+  },
+  tabActive: { backgroundColor: theme.surfaceAlt },
+  tabText: { color: theme.textMuted, fontWeight: '600' },
+  tabTextActive: { color: theme.text },
 });
