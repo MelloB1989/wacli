@@ -54,14 +54,16 @@ budget you should measure against your usage.
 
 | | |
 |---|---|
-| Expo SDK | 56 |
-| React Native | 0.85 · React 19 |
+| Expo SDK | 57 |
+| React Native | 0.86 · React 19 |
 | iOS | 16.4+ (ExpoModulesCore's floor for this SDK) |
 | Android | minSdk 24, compileSdk 36 |
 | Go | 1.25+, to build the bindings |
 | bun | 1.2+, the package manager for this module and its example |
 
-Versions are pinned to what `expo` bundles for SDK 56, so `npx expo install --check` stays quiet.
+Versions are pinned to what `expo` bundles for SDK 57, so `bunx expo install --check` stays quiet.
+The one exception is `expo-module-scripts`, which has no 57 release yet — 56.0.3 is current and
+works against this SDK.
 The one dependency Expo does not bundle is `react-native-qrcode-svg` — there is no first-party QR
 *generator* in the SDK — but it renders through `react-native-svg`, which is bundled.
 

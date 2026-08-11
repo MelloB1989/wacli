@@ -21,7 +21,7 @@ interesting part of the code about wacli rather than about routing.
 
 ## Run it
 
-Built against **Expo SDK 56** (React Native 0.85, React 19). This is native code, so it needs a
+Built against **Expo SDK 57** (React Native 0.86, React 19). This is native code, so it needs a
 **dev client** — it cannot run in Expo Go.
 
 ```bash

@@ -41,8 +41,8 @@
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
-    "expo": "~56.0.19",
-    "expo-modules-core": "~56.0.23",
+    "expo": "~57.0.12",
+    "expo-modules-core": "~57.0.10",
     "expo-module-scripts": "~56.0.3"
   }
 }

@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "expo": "~56.0.19",
-    "expo-clipboard": "~56.0.4",
-    "expo-status-bar": "~56.0.4",
+    "expo": "~57.0.12",
+    "expo-clipboard": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
     "expo-wacli": "file:..",
     "react": "19.2.3",
-    "react-native": "0.85.3",
+    "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
     "react-native-qrcode-svg": "^6.3.2"
