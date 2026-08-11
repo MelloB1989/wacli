@@ -1,7 +1,7 @@
 import {FormEvent, useDeferredValue, useEffect, useMemo, useState} from 'react'
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query'
 import './App.css'
-import {AssistantSettings, ChatRecord, OpenClawBridgeRecord, WebhookRecord, wacliDesktop} from './lib/wails'
+import {ChatRecord, WebhookRecord, wacliDesktop} from './lib/wails'
 import {AppTab, useUIStore} from './store/ui'
 
 const chatFilters = ['all', 'locked', 'unlocked', 'groups', 'dms']
@@ -22,7 +22,6 @@ function App() {
   } = useUIStore()
 
   const deferredChatQuery = useDeferredValue(chatQuery)
-  const [assistantDraft, setAssistantDraft] = useState<AssistantSettings | null>(null)
   const [webhookForm, setWebhookForm] = useState({
     url: '',
     secret: '',
@@ -32,25 +31,10 @@ function App() {
     enabled: true,
     chat_jids: [] as string[],
   })
-  const [bridgeForm, setBridgeForm] = useState({
-    command: 'openclaw',
-    scope: 'all_unlocked',
-    context_limit: 12,
-    instruction: '',
-    enabled: true,
-    chat_jids: [] as string[],
-  })
-
   const statusQuery = useQuery({
     queryKey: ['status'],
     queryFn: () => wacliDesktop.GetStatus(),
     refetchInterval: 5000,
-  })
-
-  const assistantQuery = useQuery({
-    queryKey: ['assistant-settings'],
-    queryFn: () => wacliDesktop.GetAssistantSettings(),
-    refetchInterval: 10000,
   })
 
   const chatsQuery = useQuery({
@@ -71,18 +55,6 @@ function App() {
     refetchInterval: 6000,
   })
 
-  const bridgesQuery = useQuery({
-    queryKey: ['openclaw-bridges'],
-    queryFn: () => wacliDesktop.ListOpenClawBridges(),
-    refetchInterval: 6000,
-  })
-
-  const deliveriesQuery = useQuery({
-    queryKey: ['openclaw-deliveries'],
-    queryFn: () => wacliDesktop.ListOpenClawDeliveries(30),
-    refetchInterval: 4000,
-  })
-
   const loginQuery = useQuery({
     queryKey: ['login-session'],
     queryFn: () => wacliDesktop.GetLoginSession(),
@@ -95,12 +67,6 @@ function App() {
     enabled: Boolean(loginQuery.data?.qr_available),
     refetchInterval: loginQuery.data?.running ? 2000 : false,
   })
-
-  useEffect(() => {
-    if (assistantQuery.data) {
-      setAssistantDraft(assistantQuery.data)
-    }
-  }, [assistantQuery.data])
 
   const dndMutation = useMutation({
     mutationFn: (enabled: boolean) => wacliDesktop.SetDND(enabled),
@@ -129,14 +95,6 @@ function App() {
     onSuccess: () => {
       queryClient.invalidateQueries({queryKey: ['chats']})
       queryClient.invalidateQueries({queryKey: ['status']})
-    },
-  })
-
-  const assistantMutation = useMutation({
-    mutationFn: (settings: AssistantSettings) => wacliDesktop.SaveAssistantSettings(settings),
-    onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['assistant-settings']})
-      queryClient.invalidateQueries({queryKey: ['logs']})
     },
   })
 
@@ -170,42 +128,10 @@ function App() {
     },
   })
 
-  const createBridgeMutation = useMutation({
-    mutationFn: (record: OpenClawBridgeRecord) => wacliDesktop.CreateOpenClawBridge(record),
-    onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['openclaw-bridges']})
-      queryClient.invalidateQueries({queryKey: ['logs']})
-      setBridgeForm({
-        command: 'openclaw',
-        scope: 'all_unlocked',
-        context_limit: 12,
-        instruction: '',
-        enabled: true,
-        chat_jids: [],
-      })
-    },
-  })
-
-  const deleteBridgeMutation = useMutation({
-    mutationFn: (id: number) => wacliDesktop.DeleteOpenClawBridge(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({queryKey: ['openclaw-bridges']})
-      queryClient.invalidateQueries({queryKey: ['logs']})
-    },
-  })
-
   const chats = chatsQuery.data ?? []
   const unlockedJIDs = useMemo(() => chats.filter((chat) => !chat.locked).map((chat) => chat.jid), [chats])
   const selectedChatOptions = useMemo(() => chats.map((chat) => ({value: chat.jid, label: chat.name || chat.jid})), [chats])
   const latestLogs = logsQuery.data ?? []
-  const deliveries = deliveriesQuery.data ?? []
-
-  function submitAssistant(event: FormEvent) {
-    event.preventDefault()
-    if (!assistantDraft) return
-    assistantMutation.mutate(assistantDraft)
-  }
-
   function submitWebhook(event: FormEvent) {
     event.preventDefault()
     createWebhookMutation.mutate({
@@ -223,22 +149,6 @@ function App() {
     })
   }
 
-  function submitBridge(event: FormEvent) {
-    event.preventDefault()
-    createBridgeMutation.mutate({
-      id: 0,
-      command: bridgeForm.command,
-      scope: bridgeForm.scope,
-      chat_jids: bridgeForm.scope === 'selected_chats' ? bridgeForm.chat_jids : [],
-      message_types: ['*'],
-      context_limit: Number(bridgeForm.context_limit),
-      instruction: bridgeForm.instruction,
-      enabled: bridgeForm.enabled,
-      created_at: '',
-      updated_at: '',
-    })
-  }
-
   return (
     <div className="shell">
       <aside className="rail">
@@ -250,7 +160,7 @@ function App() {
           </div>
         </div>
         <nav className="nav">
-          {(['dashboard', 'chats', 'logs', 'automation', 'assistant'] as AppTab[]).map((tab) => (
+          {(['dashboard', 'chats', 'logs', 'automation'] as AppTab[]).map((tab) => (
             <button
               key={tab}
               className={`nav-button ${activeTab === tab ? 'active' : ''}`}
@@ -350,27 +260,6 @@ function App() {
                   label="Initial access configured"
                   value={statusQuery.data?.initial_access_configured ? 'Yes' : 'No'}
                 />
-                <DetailRow label="Preferred runtime" value={assistantQuery.data?.preferred_runtime || 'openclaw'} />
-              </div>
-            </section>
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Recent Assistant Activity</h2>
-                  <p>OpenClaw delivery history from the daemon.</p>
-                </div>
-              </div>
-              <div className="list">
-                {deliveries.slice(0, 8).map((delivery) => (
-                  <article key={`${delivery.bridge_id}-${delivery.message_id}`} className="list-item">
-                    <div>
-                      <strong>{delivery.chat_name || delivery.chat_jid}</strong>
-                      <div className="meta">{new Date(delivery.updated_at).toLocaleString()}</div>
-                    </div>
-                    <span className={`pill ${delivery.status}`}>{delivery.status}</span>
-                  </article>
-                ))}
-                {deliveries.length === 0 && <div className="empty-state">No assistant deliveries yet.</div>}
               </div>
             </section>
           </div>
@@ -517,172 +406,9 @@ function App() {
               </div>
             </section>
 
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>OpenClaw Bridges</h2>
-                  <p>Existing command-driven assistant automation path.</p>
-                </div>
-              </div>
-              <form className="form-grid" onSubmit={submitBridge}>
-                <input className="field" placeholder="Command" value={bridgeForm.command} onChange={(event) => setBridgeForm((prev) => ({...prev, command: event.target.value}))} />
-                <select className="field" value={bridgeForm.scope} onChange={(event) => setBridgeForm((prev) => ({...prev, scope: event.target.value}))}>
-                  <option value="all_unlocked">all_unlocked</option>
-                  <option value="selected_chats">selected_chats</option>
-                </select>
-                <input
-                  className="field"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={bridgeForm.context_limit}
-                  onChange={(event) => setBridgeForm((prev) => ({...prev, context_limit: Number(event.target.value)}))}
-                />
-                <textarea className="field textarea" placeholder="Instruction override" value={bridgeForm.instruction} onChange={(event) => setBridgeForm((prev) => ({...prev, instruction: event.target.value}))} />
-                {bridgeForm.scope === 'selected_chats' && (
-                  <select
-                    multiple
-                    className="field multi"
-                    value={bridgeForm.chat_jids}
-                    onChange={(event) =>
-                      setBridgeForm((prev) => ({
-                        ...prev,
-                        chat_jids: Array.from(event.target.selectedOptions).map((item) => item.value),
-                      }))
-                    }
-                  >
-                    {selectedChatOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <button className="primary" type="submit" disabled={createBridgeMutation.isPending}>
-                  Add bridge
-                </button>
-              </form>
-              <div className="list">
-                {(bridgesQuery.data ?? []).map((bridge) => (
-                  <article key={bridge.id} className="list-item stacked">
-                    <div>
-                      <strong>{bridge.command}</strong>
-                      <div className="meta">scope={bridge.scope} · context={bridge.context_limit}</div>
-                    </div>
-                    <button className="ghost" onClick={() => deleteBridgeMutation.mutate(bridge.id)}>
-                      Delete
-                    </button>
-                  </article>
-                ))}
-              </div>
-              <div className="delivery-stream">
-                <h3>Recent deliveries</h3>
-                {deliveries.map((delivery) => (
-                  <article key={`${delivery.bridge_id}-${delivery.message_id}`} className="delivery-row">
-                    <div>
-                      <strong>{delivery.chat_name || delivery.chat_jid}</strong>
-                      <div className="meta">{delivery.status}</div>
-                    </div>
-                    <div className="meta">{new Date(delivery.updated_at).toLocaleString()}</div>
-                  </article>
-                ))}
-              </div>
-            </section>
           </div>
         )}
 
-        {activeTab === 'assistant' && assistantDraft && (
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>Assistant Behavior</h2>
-                <p>
-                  Define personality, reply style, and runtime preferences for OpenClaw, Codex,
-                  Claude, or Karma-backed custom replies.
-                </p>
-              </div>
-            </div>
-            <form className="assistant-form" onSubmit={submitAssistant}>
-              <div className="form-grid two">
-                <label>
-                  <span>Assistant name</span>
-                  <input
-                    className="field"
-                    value={assistantDraft.assistant_name}
-                    onChange={(event) => setAssistantDraft({...assistantDraft, assistant_name: event.target.value})}
-                  />
-                </label>
-                <label>
-                  <span>Preferred runtime</span>
-                  <select
-                    className="field"
-                    value={assistantDraft.preferred_runtime}
-                    onChange={(event) => setAssistantDraft({...assistantDraft, preferred_runtime: event.target.value})}
-                  >
-                    <option value="openclaw">OpenClaw</option>
-                    <option value="codex">Codex</option>
-                    <option value="claude">Claude Code</option>
-                    <option value="karma">Karma AI</option>
-                  </select>
-                </label>
-              </div>
-
-              <label>
-                <span>Personality</span>
-                <textarea className="field textarea" value={assistantDraft.personality} onChange={(event) => setAssistantDraft({...assistantDraft, personality: event.target.value})} />
-              </label>
-              <label>
-                <span>Behavior</span>
-                <textarea className="field textarea" value={assistantDraft.behavior} onChange={(event) => setAssistantDraft({...assistantDraft, behavior: event.target.value})} />
-              </label>
-              <label>
-                <span>Reply style</span>
-                <textarea className="field textarea" value={assistantDraft.reply_style} onChange={(event) => setAssistantDraft({...assistantDraft, reply_style: event.target.value})} />
-              </label>
-              <label>
-                <span>Reply instruction</span>
-                <textarea
-                  className="field textarea tall"
-                  value={assistantDraft.reply_instruction}
-                  onChange={(event) => setAssistantDraft({...assistantDraft, reply_instruction: event.target.value})}
-                />
-              </label>
-
-              <div className="form-grid three">
-                <label>
-                  <span>Codex model</span>
-                  <input className="field" value={assistantDraft.codex_model} onChange={(event) => setAssistantDraft({...assistantDraft, codex_model: event.target.value})} />
-                </label>
-                <label>
-                  <span>Claude model</span>
-                  <input className="field" value={assistantDraft.claude_model} onChange={(event) => setAssistantDraft({...assistantDraft, claude_model: event.target.value})} />
-                </label>
-                <label>
-                  <span>OpenClaw command</span>
-                  <input className="field" value={assistantDraft.openclaw_command} onChange={(event) => setAssistantDraft({...assistantDraft, openclaw_command: event.target.value})} />
-                </label>
-                <label>
-                  <span>Karma provider</span>
-                  <input className="field" value={assistantDraft.karma_provider} onChange={(event) => setAssistantDraft({...assistantDraft, karma_provider: event.target.value})} />
-                </label>
-                <label>
-                  <span>Karma model</span>
-                  <input className="field" value={assistantDraft.karma_model} onChange={(event) => setAssistantDraft({...assistantDraft, karma_model: event.target.value})} />
-                </label>
-                <label>
-                  <span>Karma API key</span>
-                  <input className="field" type="password" value={assistantDraft.karma_api_key || ''} onChange={(event) => setAssistantDraft({...assistantDraft, karma_api_key: event.target.value})} />
-                </label>
-              </div>
-
-              <div className="panel-actions">
-                <button className="primary" type="submit" disabled={assistantMutation.isPending}>
-                  Save assistant settings
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
       </main>
     </div>
   )

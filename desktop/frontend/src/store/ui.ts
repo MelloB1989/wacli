@@ -1,6 +1,6 @@
 import {create} from 'zustand'
 
-export type AppTab = 'dashboard' | 'chats' | 'logs' | 'automation' | 'assistant'
+export type AppTab = 'dashboard' | 'chats' | 'logs' | 'automation'
 
 type UIState = {
   activeTab: AppTab

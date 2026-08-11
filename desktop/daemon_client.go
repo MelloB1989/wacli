@@ -61,21 +61,6 @@ type ChatRecord struct {
 	LastMessagePreview string `json:"last_message_preview"`
 }
 
-type AssistantSettings struct {
-	AssistantName    string `json:"assistant_name"`
-	Personality      string `json:"personality"`
-	Behavior         string `json:"behavior"`
-	ReplyStyle       string `json:"reply_style"`
-	ReplyInstruction string `json:"reply_instruction"`
-	PreferredRuntime string `json:"preferred_runtime"`
-	CodexModel       string `json:"codex_model"`
-	ClaudeModel      string `json:"claude_model"`
-	OpenClawCommand  string `json:"openclaw_command"`
-	KarmaProvider    string `json:"karma_provider"`
-	KarmaModel       string `json:"karma_model"`
-	KarmaAPIKey      string `json:"karma_api_key,omitempty"`
-}
-
 type AppLogRecord struct {
 	ID          int64  `json:"id"`
 	Level       string `json:"level"`
@@ -97,34 +82,6 @@ type WebhookRecord struct {
 	Enabled      bool     `json:"enabled"`
 	CreatedAt    string   `json:"created_at"`
 	UpdatedAt    string   `json:"updated_at"`
-}
-
-type OpenClawBridgeRecord struct {
-	ID           int64    `json:"id"`
-	Command      string   `json:"command"`
-	Scope        string   `json:"scope"`
-	ChatJIDs     []string `json:"chat_jids,omitempty"`
-	MessageTypes []string `json:"message_types,omitempty"`
-	ContextLimit int      `json:"context_limit"`
-	Instruction  string   `json:"instruction"`
-	Enabled      bool     `json:"enabled"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
-}
-
-type OpenClawDeliveryRecord struct {
-	BridgeID       int64  `json:"bridge_id"`
-	ChatJID        string `json:"chat_jid"`
-	ChatName       string `json:"chat_name,omitempty"`
-	MessageID      string `json:"message_id"`
-	SessionID      string `json:"session_id"`
-	Command        string `json:"command,omitempty"`
-	Status         string `json:"status"`
-	LastError      string `json:"last_error,omitempty"`
-	RequestMessage string `json:"request_message,omitempty"`
-	ResponseOutput string `json:"response_output,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
 }
 
 type SyncResponse struct {
@@ -199,20 +156,6 @@ func (c *daemonClient) sync(ctx context.Context) (SyncResponse, error) {
 	return response, err
 }
 
-func (c *daemonClient) assistantSettings(ctx context.Context) (AssistantSettings, error) {
-	var response AssistantSettings
-	err := c.do(ctx, http.MethodGet, "/assistant/settings", nil, nil, &response)
-	return response, err
-}
-
-func (c *daemonClient) saveAssistantSettings(ctx context.Context, settings AssistantSettings) (AssistantSettings, error) {
-	var response struct {
-		AssistantSettings AssistantSettings `json:"assistant_settings"`
-	}
-	err := c.do(ctx, http.MethodPut, "/assistant/settings", nil, settings, &response)
-	return response.AssistantSettings, err
-}
-
 func (c *daemonClient) chats(ctx context.Context, filter, queryText string, limit int) ([]ChatRecord, error) {
 	query := url.Values{}
 	if strings.TrimSpace(filter) != "" {
@@ -269,38 +212,6 @@ func (c *daemonClient) createWebhook(ctx context.Context, webhook WebhookRecord)
 
 func (c *daemonClient) deleteWebhook(ctx context.Context, id int64) error {
 	return c.do(ctx, http.MethodDelete, "/webhooks/"+url.PathEscape(strconv.FormatInt(id, 10)), nil, nil, nil)
-}
-
-func (c *daemonClient) openClawBridges(ctx context.Context) ([]OpenClawBridgeRecord, error) {
-	var response struct {
-		OpenClawBridges []OpenClawBridgeRecord `json:"openclaw_bridges"`
-	}
-	err := c.do(ctx, http.MethodGet, "/openclaw_bridges", nil, nil, &response)
-	return response.OpenClawBridges, err
-}
-
-func (c *daemonClient) createOpenClawBridge(ctx context.Context, bridge OpenClawBridgeRecord) (OpenClawBridgeRecord, error) {
-	var response struct {
-		OpenClawBridge OpenClawBridgeRecord `json:"openclaw_bridge"`
-	}
-	err := c.do(ctx, http.MethodPost, "/openclaw_bridges", nil, bridge, &response)
-	return response.OpenClawBridge, err
-}
-
-func (c *daemonClient) deleteOpenClawBridge(ctx context.Context, id int64) error {
-	return c.do(ctx, http.MethodDelete, "/openclaw_bridges/"+url.PathEscape(strconv.FormatInt(id, 10)), nil, nil, nil)
-}
-
-func (c *daemonClient) openClawDeliveries(ctx context.Context, limit int) ([]OpenClawDeliveryRecord, error) {
-	query := url.Values{}
-	if limit > 0 {
-		query.Set("limit", strconv.Itoa(limit))
-	}
-	var response struct {
-		OpenClawDeliveries []OpenClawDeliveryRecord `json:"openclaw_deliveries"`
-	}
-	err := c.do(ctx, http.MethodGet, "/openclaw_deliveries", query, nil, &response)
-	return response.OpenClawDeliveries, err
 }
 
 func qrFilePath() string {

@@ -8,9 +8,7 @@ It provides:
 - daemon status and sync controls
 - DND controls
 - chat lock / unlock management
-- assistant behavior and personality settings
 - webhook management
-- OpenClaw bridge visibility and recent delivery logs
 
 ## Development
 

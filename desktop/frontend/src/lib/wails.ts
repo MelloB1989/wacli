@@ -18,21 +18,6 @@ export type ChatRecord = {
   last_message_preview: string
 }
 
-export type AssistantSettings = {
-  assistant_name: string
-  personality: string
-  behavior: string
-  reply_style: string
-  reply_instruction: string
-  preferred_runtime: string
-  codex_model: string
-  claude_model: string
-  openclaw_command: string
-  karma_provider: string
-  karma_model: string
-  karma_api_key?: string
-}
-
 export type AppLogRecord = {
   id: number
   level: string
@@ -52,34 +37,6 @@ export type WebhookRecord = {
   message_types?: string[]
   context_limit: number
   enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export type OpenClawBridgeRecord = {
-  id: number
-  command: string
-  scope: string
-  chat_jids?: string[]
-  message_types?: string[]
-  context_limit: number
-  instruction: string
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export type OpenClawDeliveryRecord = {
-  bridge_id: number
-  chat_jid: string
-  chat_name?: string
-  message_id: string
-  session_id: string
-  command?: string
-  status: string
-  last_error?: string
-  request_message?: string
-  response_output?: string
   created_at: string
   updated_at: string
 }
@@ -124,9 +81,6 @@ export const wacliDesktop = {
   GetStatus: () => getBackendMethod<() => Promise<StatusSnapshot>>('GetStatus')(),
   SetDND: (enabled: boolean) => getBackendMethod<(enabled: boolean) => Promise<void>>('SetDND')(enabled),
   Sync: () => getBackendMethod<() => Promise<SyncResponse>>('Sync')(),
-  GetAssistantSettings: () => getBackendMethod<() => Promise<AssistantSettings>>('GetAssistantSettings')(),
-  SaveAssistantSettings: (settings: AssistantSettings) =>
-    getBackendMethod<(settings: AssistantSettings) => Promise<AssistantSettings>>('SaveAssistantSettings')(settings),
   ListChats: (filter: string, query: string, limit: number) =>
     getBackendMethod<(filter: string, query: string, limit: number) => Promise<ChatRecord[]>>('ListChats')(filter, query, limit),
   SetChatLocked: (jid: string, locked: boolean) =>
@@ -139,12 +93,6 @@ export const wacliDesktop = {
   CreateWebhook: (record: WebhookRecord) =>
     getBackendMethod<(record: WebhookRecord) => Promise<WebhookRecord>>('CreateWebhook')(record),
   DeleteWebhook: (id: number) => getBackendMethod<(id: number) => Promise<void>>('DeleteWebhook')(id),
-  ListOpenClawBridges: () => getBackendMethod<() => Promise<OpenClawBridgeRecord[]>>('ListOpenClawBridges')(),
-  CreateOpenClawBridge: (record: OpenClawBridgeRecord) =>
-    getBackendMethod<(record: OpenClawBridgeRecord) => Promise<OpenClawBridgeRecord>>('CreateOpenClawBridge')(record),
-  DeleteOpenClawBridge: (id: number) => getBackendMethod<(id: number) => Promise<void>>('DeleteOpenClawBridge')(id),
-  ListOpenClawDeliveries: (limit: number) =>
-    getBackendMethod<(limit: number) => Promise<OpenClawDeliveryRecord[]>>('ListOpenClawDeliveries')(limit),
   StartLogin: (pairCode: boolean, phone: string) =>
     getBackendMethod<(pairCode: boolean, phone: string) => Promise<void>>('StartLogin')(pairCode, phone),
   GetLoginSession: () => getBackendMethod<() => Promise<LoginSessionState>>('GetLoginSession')(),

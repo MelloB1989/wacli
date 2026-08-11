@@ -85,7 +85,9 @@ Run `wacli` with no arguments for the full command list, or see the
 | Reading | `chats`, `messages`, `resolve`, `media download` |
 | Contacts | `contacts` (list / lookup / update) |
 | Access control | `access` (lock / unlock / list / configure) |
-| Automation | `webhooks`, `openclaw`, `auto-replies` |
+| Automation | `webhooks`, `triggers`, `auto-replies` |
+| Calls | `call` (place / answer / reject / end / capture) |
+| Groups | `groups` (list / create / membership / invite) |
 | Interfaces | `tui` (terminal UI), `api` (generic local API client) |
 
 ## The local HTTP API
@@ -129,14 +131,17 @@ the [desktop UI reference](docs/desktop-ui-reference.md).
 ```
 wacli (single Go binary, package main)
 ├── daemon        long-running whatsmeow client + local HTTP API (:8765)
-├── client        every CLI subcommand → HTTP call to the daemon
+├── cli           every client subcommand, host-independent (see below)
 ├── store         SQLite persistence (session, chats, messages, contacts,
-│                 webhooks, bridges) in ~/.wacli
+│                 webhooks, triggers) in ~/.wacli
 ├── webhooks      HMAC-signed, chat-scoped event delivery
-├── openclaw      inbound bridge host (route chats into external harnesses)
+├── triggers      rule engine: match an inbound event, run actions
 └── tui           Bubble Tea operations console
 
-internal/daemonclient   typed Go client for the daemon API (reusable)
+cli/                    the client commands, parameterised on where output goes
+                        and how a request reaches the service, so the binary and
+                        the mobile bindings run the same code
+client/                 typed Go client for the daemon API (reusable)
 desktop/                Wails desktop app (separate Go module)
 mobile/                 gomobile binding surface (Android/iOS)
 expo-wacli/             React Native Expo module wrapping it

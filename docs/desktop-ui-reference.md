@@ -7,8 +7,7 @@ It is intended for:
 - first-time WhatsApp login with QR visibility inside the app
 - status, sync, and DND control
 - locked / unlocked chat management
-- assistant behavior and personality configuration
-- webhook and OpenClaw bridge management
+- webhook management
 - local app log inspection
 
 ## Requirements
@@ -89,10 +88,8 @@ That means:
 - `Chats`
 - `Logs`
 - `Automation`
-- `Assistant`
 
 ## Runtime Notes
 
-- The desktop UI currently manages the existing OpenClaw bridge path directly.
-- Assistant settings also store preferred runtime and model fields for `OpenClaw`, `Codex`, `Claude Code`, and `Karma AI`.
+- Automation is webhooks; the rule engine behind `wacli triggers` has no desktop screen yet.
 - `DND` still remains the hard automation gate.

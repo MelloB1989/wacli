@@ -50,14 +50,6 @@ func (a *App) Sync() (SyncResponse, error) {
 	return a.client.sync(a.callContext(45 * time.Second))
 }
 
-func (a *App) GetAssistantSettings() (AssistantSettings, error) {
-	return a.client.assistantSettings(a.callContext(10 * time.Second))
-}
-
-func (a *App) SaveAssistantSettings(settings AssistantSettings) (AssistantSettings, error) {
-	return a.client.saveAssistantSettings(a.callContext(15*time.Second), settings)
-}
-
 func (a *App) ListChats(filter, query string, limit int) ([]ChatRecord, error) {
 	return a.client.chats(a.callContext(15*time.Second), filter, query, limit)
 }
@@ -84,22 +76,6 @@ func (a *App) CreateWebhook(record WebhookRecord) (WebhookRecord, error) {
 
 func (a *App) DeleteWebhook(id int64) error {
 	return a.client.deleteWebhook(a.callContext(10*time.Second), id)
-}
-
-func (a *App) ListOpenClawBridges() ([]OpenClawBridgeRecord, error) {
-	return a.client.openClawBridges(a.callContext(10 * time.Second))
-}
-
-func (a *App) CreateOpenClawBridge(record OpenClawBridgeRecord) (OpenClawBridgeRecord, error) {
-	return a.client.createOpenClawBridge(a.callContext(15*time.Second), record)
-}
-
-func (a *App) DeleteOpenClawBridge(id int64) error {
-	return a.client.deleteOpenClawBridge(a.callContext(10*time.Second), id)
-}
-
-func (a *App) ListOpenClawDeliveries(limit int) ([]OpenClawDeliveryRecord, error) {
-	return a.client.openClawDeliveries(a.callContext(10*time.Second), limit)
 }
 
 func (a *App) StartLogin(pairCode bool, phone string) error {
