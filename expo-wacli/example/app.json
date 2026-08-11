@@ -3,6 +3,7 @@
     "name": "wacli demo",
     "slug": "expo-wacli-example",
     "version": "1.0.0",
+    "scheme": "wacli-example",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "assetBundlePatterns": ["**/*"],
@@ -17,7 +18,7 @@
       [
         "expo-wacli",
         {
-          "abiFilters": ["arm64-v8a"]
+          "abiFilters": ["arm64-v8a", "x86_64"]
         }
       ]
     ]

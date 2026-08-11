@@ -13,16 +13,19 @@
   "dependencies": {
     "expo": "~57.0.12",
     "expo-clipboard": "~57.0.1",
+    "expo-dev-client": "~57.0.11",
     "expo-status-bar": "~57.0.1",
     "expo-wacli": "file:..",
     "react": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-qrcode-svg": "^6.3.2",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-svg": "15.15.4",
-    "react-native-qrcode-svg": "^6.3.2"
+    "react-native-svg": "15.15.4"
   },
   "devDependencies": {
+    "@babel/core": "^7.25.2",
     "@types/react": "~19.1.1",
+    "babel-preset-expo": "~57.0.6",
     "typescript": "~5.9.2"
   }
 }
