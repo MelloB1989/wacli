@@ -243,16 +243,19 @@ export function sendMessage(
   });
 }
 
+// These two routes take `chat` and `id`, not the `chat_ref`/`message_id` that `/media/download`
+// below takes. The API is inconsistent here; sending the wrong pair resolves nothing and the edit
+// or delete silently applies to no message.
 export function editMessage(
   chat: string,
   messageID: string,
   text: string
 ): Promise<{ ok: boolean }> {
-  return request('POST', '/messages/edit', { chat_ref: chat, message_id: messageID, text });
+  return request('POST', '/messages/edit', { chat: chat, id: messageID, text });
 }
 
 export function deleteMessage(chat: string, messageID: string): Promise<{ ok: boolean }> {
-  return request('POST', '/messages/delete', { chat_ref: chat, message_id: messageID });
+  return request('POST', '/messages/delete', { chat: chat, id: messageID });
 }
 
 /**
