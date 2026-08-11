@@ -59,6 +59,7 @@ budget you should measure against your usage.
 | iOS | 16.4+ (ExpoModulesCore's floor for this SDK) |
 | Android | minSdk 24, compileSdk 36 |
 | Go | 1.25+, to build the bindings |
+| bun | 1.2+, the package manager for this module and its example |
 
 Versions are pinned to what `expo` bundles for SDK 56, so `npx expo install --check` stays quiet.
 The one dependency Expo does not bundle is `react-native-qrcode-svg` — there is no first-party QR
@@ -85,6 +86,16 @@ cd wacli
 ./expo-wacli/scripts/build-bindings.sh ios      # needs macOS + Xcode
 ```
 
+Install the JS side with bun. The module is a bun workspace whose only member is `example/`, so one
+install at this directory covers both — and, more to the point, hoists a **single** shared copy of
+`react` and `react-native` for the module and the app. Two React instances in one bundle is an
+"invalid hook call" at runtime:
+
+```bash
+cd expo-wacli
+bun install
+```
+
 Add the plugin to `app.json`:
 
 ```json
@@ -95,7 +106,7 @@ Add the plugin to `app.json`:
 }
 ```
 
-Then `npx expo prebuild` and run on a **dev client** — this is native code, so it cannot run in
+Then `bunx expo prebuild` and run on a **dev client** — this is native code, so it cannot run in
 Expo Go.
 
 ### Size
@@ -111,7 +122,8 @@ sends, and updates live — the fastest way to see the whole thing working:
 
 ```bash
 ./scripts/build-bindings.sh
-cd example && npm install && npx expo prebuild --clean && npx expo run:android
+bun install
+cd example && bunx expo prebuild --clean && bunx expo run:android
 ```
 
 ## Usage

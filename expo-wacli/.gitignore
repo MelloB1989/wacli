@@ -4,7 +4,13 @@
 android/libs/*.aar
 ios/Frameworks/
 
-# JS/Gradle build output
+# Not committed: expo-wacli is published as a library, and the workspace root is that library, so
+# consumers resolve their own tree. package.json pins tightly enough (~56.x, exact react and
+# react-native) that a 376 KB generated file buys little.
+bun.lock
+bun.lockb
+
+# Build output
 build/
 node_modules/
 android/build/

@@ -2,32 +2,25 @@ const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 
 const projectRoot = __dirname;
-const moduleRoot = path.resolve(projectRoot, '..');
+// The module is this example's workspace root, so its node_modules is where bun hoists everything.
+const workspaceRoot = path.resolve(projectRoot, '..');
 
 const config = getDefaultConfig(projectRoot);
 
-// expo-wacli is linked with `file:..`, which puts its source outside the project root. Metro only
-// watches the project root by default, so without this an edit to ../src would not rebuild here.
-config.watchFolders = [moduleRoot];
+// The module's source lives outside the project root. Metro only watches the project root by
+// default, so without this an edit to ../src would not rebuild here — and the hoisted packages
+// under ../node_modules would not be watched either.
+config.watchFolders = [workspaceRoot];
 
-// Resolve from the app first and the module second, never the reverse.
+// Resolve from the app first, then the workspace root. bun installs into a content-addressed store
+// under <root>/node_modules/.bun and symlinks names into place, so both directories are needed and
+// Metro has to follow the symlinks — which it does by default on this React Native version.
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
-  path.resolve(moduleRoot, 'node_modules'),
+  path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// The module keeps expo and react as dev dependencies for its own typechecking. Two copies of React
-// in one bundle is an "invalid hook call" crash that costs an afternoon to diagnose, so the
-// module's copies are hidden from the bundler entirely.
-config.resolver.blockList = [
-  new RegExp(`^${escapeRegExp(path.join(moduleRoot, 'node_modules', 'react'))}\\b.*$`),
-  new RegExp(`^${escapeRegExp(path.join(moduleRoot, 'node_modules', 'react-native'))}\\b.*$`),
-  new RegExp(`^${escapeRegExp(path.join(moduleRoot, 'node_modules', 'expo'))}\\b.*$`),
-  new RegExp(`^${escapeRegExp(path.join(moduleRoot, 'example'))}.*$`),
-];
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// Deliberately no blockList hiding the workspace root's react/react-native. Under a hoisted
+// workspace those are not a second copy to defend against — they are the only copy, shared by the
+// module and the app, which is what keeps a single React instance and avoids "invalid hook call".
 module.exports = config;

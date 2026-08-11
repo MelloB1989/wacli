@@ -32,13 +32,17 @@
     "!android/libs/*.aar",
     "!ios/Frameworks"
   ],
+  "workspaces": ["example"],
   "peerDependencies": {
     "expo": "*",
+    "expo-modules-core": "*",
     "react": "*",
     "react-native": "*"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "expo": "~56.0.19",
+    "expo-modules-core": "~56.0.23",
     "expo-module-scripts": "~56.0.3"
   }
 }
