@@ -1,0 +1,11 @@
+# gomobile output. Built by scripts/build-bindings.sh, never committed: the AAR carries a copy of
+# the Go runtime per Android ABI and the XCFramework one per Apple architecture, which is around
+# 100 MB of build artifact between them.
+android/libs/*.aar
+ios/Frameworks/
+
+# JS/Gradle build output
+build/
+node_modules/
+android/build/
+android/.gradle/

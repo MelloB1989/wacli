@@ -1,0 +1,43 @@
+{
+  "name": "expo-wacli",
+  "version": "0.1.0",
+  "description": "Run wacli — a local-first WhatsApp automation daemon — inside a React Native Expo app on iOS and Android.",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "build:bindings": "./scripts/build-bindings.sh"
+  },
+  "keywords": ["react-native", "expo", "wacli", "whatsapp"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MelloB1989/wacli.git",
+    "directory": "expo-wacli"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/MelloB1989/wacli/tree/main/expo-wacli",
+  "files": [
+    "build",
+    "android",
+    "ios",
+    "scripts",
+    "app.plugin.js",
+    "expo-module.config.json",
+    "!android/build",
+    "!android/libs/*.aar",
+    "!ios/Frameworks"
+  ],
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "expo-module-scripts": "^4.0.0",
+    "expo": "^52.0.0"
+  }
+}

@@ -1,0 +1,88 @@
+name: Mobile bindings
+
+# Builds the gomobile artifacts the Expo module links against. They are deliberately not in git —
+# together they are around 100 MB of per-architecture build output — so this workflow is how you get
+# them without an NDK and a Mac on your desk.
+#
+# Attached to a release when tagged, otherwise downloadable from the run's artifacts.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  # Not on every PR: the two jobs take ~15 minutes between them, and the cheap guard against the
+  # binding surface drifting lives in ci.yml instead.
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: AAR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the build script derives its version from git describe
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build AAR
+        env:
+          # Preinstalled on the runner image; the build script also accepts ANDROID_NDK_HOME.
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: ./expo-wacli/scripts/build-bindings.sh android
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wacli-android-aar
+          path: expo-wacli/android/libs/wacli.aar
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: expo-wacli/android/libs/wacli.aar
+
+  ios:
+    name: XCFramework
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build XCFramework
+        run: ./expo-wacli/scripts/build-bindings.sh ios
+
+      # An .xcframework is a directory, so it has to be archived to survive as an artifact.
+      - name: Archive
+        run: |
+          cd expo-wacli/ios/Frameworks
+          zip -qry Mobile.xcframework.zip Mobile.xcframework
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wacli-ios-xcframework
+          path: expo-wacli/ios/Frameworks/Mobile.xcframework.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: expo-wacli/ios/Frameworks/Mobile.xcframework.zip

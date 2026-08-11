@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!--
+    wacli holds a WebSocket to WhatsApp for as long as it runs. Android only permits that from a
+    foreground service, which is why these three permissions are here rather than optional:
+    FOREGROUND_SERVICE and its dataSync subtype to run the service at all, POST_NOTIFICATIONS
+    because a foreground service must show a notification and Android 13+ makes that a runtime grant.
+  -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <service
+      android:name=".WacliForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="dataSync" />
+  </application>
+
+</manifest>

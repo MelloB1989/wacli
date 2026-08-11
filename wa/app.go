@@ -32,14 +32,28 @@ func init() {
 	// WACLI_HOME lets several independent wacli instances share one OS user,
 	// each with its own WhatsApp session, database and media. Pair it with
 	// WACLI_HTTP_ADDR so each daemon binds its own port. Defaults to ~/.wacli.
-	DataDir = strings.TrimSpace(os.Getenv("WACLI_HOME"))
+	InitErr = Configure(strings.TrimSpace(os.Getenv("WACLI_HOME")))
+}
+
+// Configure points this process at a state directory, deriving every path under it and creating the
+// directory tree. An empty home means "resolve it the usual way": WACLI_HOME, else ~/.wacli.
+//
+// init calls this, which covers the CLI and the daemon. It is exported for the mobile bindings:
+// an app only learns its sandbox path at runtime, well after package init has run, and neither
+// Android nor iOS has a home directory to fall back on — so the Expo module calls Configure with
+// its container path before opening a store.
+//
+// Call it before OpenStore or NewService, not after: both capture the paths as they stand when they
+// open, so moving the state directory under a live service does nothing useful.
+func Configure(home string) error {
+	InitErr = nil
+	DataDir = strings.TrimSpace(home)
 	if DataDir == "" {
-		home, err := os.UserHomeDir()
+		userHome, err := os.UserHomeDir()
 		if err != nil {
-			InitErr = fmt.Errorf("cannot determine home directory: %w", err)
-			return
+			return fmt.Errorf("cannot determine home directory: %w", err)
 		}
-		DataDir = filepath.Join(home, ".wacli")
+		DataDir = filepath.Join(userHome, ".wacli")
 	}
 	MediaDir = filepath.Join(DataDir, "media")
 	// CapturePath holds raw call signaling stanzas when call capture is enabled. See callcapture.go.
@@ -52,12 +66,12 @@ func init() {
 		HTTPAddr = defaultHTTPAddr
 	}
 	if err := os.MkdirAll(DataDir, 0o700); err != nil {
-		InitErr = fmt.Errorf("cannot create data dir: %w", err)
-		return
+		return fmt.Errorf("cannot create data dir: %w", err)
 	}
 	if err := os.MkdirAll(MediaDir, 0o700); err != nil {
-		InitErr = fmt.Errorf("cannot create media dir: %w", err)
+		return fmt.Errorf("cannot create media dir: %w", err)
 	}
+	return nil
 }
 
 func boolToInt(v bool) int {

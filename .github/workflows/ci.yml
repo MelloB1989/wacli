@@ -49,6 +49,35 @@ jobs:
             GOOS="${target%/*}" GOARCH="${target#*/}" go build -o /dev/null ./...
           done
 
+      # gomobile can only bind a narrow slice of Go — no maps, no slices of structs — and it is easy
+      # to widen mobile/'s API past that without noticing, since it compiles perfectly well as
+      # ordinary Go. gobind generates the Java and Objective-C bridges and fails if the surface is
+      # unbindable, which catches the drift here rather than on someone's Mac. It needs no NDK, so
+      # it costs seconds; the real AAR/XCFramework builds live in mobile-bindings.yml.
+      - name: gomobile binding surface
+        run: |
+          go run golang.org/x/mobile/cmd/gobind@latest \
+            -lang=java,objc \
+            -outdir="$(mktemp -d)" \
+            github.com/MelloB1989/wacli/mobile
+
+  expo-module:
+    name: expo module typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: expo-wacli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # --ignore-scripts skips expo-module-scripts' prepare hook, which regenerates module scaffolding
+      # and shells out to rsync. None of that is needed to typecheck, and it is one more thing to go
+      # wrong on a runner.
+      - run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      - run: npx tsc --noEmit
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

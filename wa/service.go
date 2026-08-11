@@ -57,6 +57,47 @@ type Service struct {
 	media *callMedia
 	// queue serialises outgoing calls behind one active-call slot. See callqueue.go.
 	queue *callQueue
+
+	// observerMu guards observer, the in-process event listener. See SetEventObserver.
+	observerMu sync.RWMutex
+	observer   func(event string, payload map[string]any)
+}
+
+// SetEventObserver registers an in-process listener for the events that also feed webhooks —
+// incoming_message, outgoing_message, connection_state, sync_complete. Passing nil clears it.
+//
+// This exists for hosts that embed the service rather than consume it over HTTP, the mobile
+// bindings being the case in hand: an app rendering a chat list needs the same stream a webhook
+// subscriber gets, and round-tripping it through an HTTP callback to itself would be absurd.
+//
+// It deliberately fires ahead of the two gates on webhook delivery. DND is the automation switch —
+// it decides whether wacli may act on the user's behalf, which has no bearing on whether the app
+// that owns the account may see its own messages — and an embedded host is a subscriber in its own
+// right, not something that should have to register a webhook against itself to hear anything.
+//
+// The callback runs on the whatsmeow event goroutine. Keep it short and never re-enter the service
+// from inside it.
+func (s *Service) SetEventObserver(fn func(event string, payload map[string]any)) {
+	s.observerMu.Lock()
+	defer s.observerMu.Unlock()
+	s.observer = fn
+}
+
+func (s *Service) notifyObserver(event string, payload map[string]any) {
+	s.observerMu.RLock()
+	observer := s.observer
+	s.observerMu.RUnlock()
+	if observer == nil {
+		return
+	}
+	defer func() {
+		// A panic crossing back out of a host callback (a JNI or ObjC bridge, in the mobile case)
+		// would take the event goroutine down with it and stop message delivery entirely.
+		if r := recover(); r != nil {
+			s.log.Warnf("event observer panicked on %s: %v", event, r)
+		}
+	}()
+	observer(event, payload)
 }
 
 // StartCallCapture begins recording raw call stanzas to the capture file.
@@ -1772,6 +1813,7 @@ func extractDirectPathFromURL(url string) string {
 }
 
 func (s *Service) dispatchWebhook(event string, payload map[string]any) {
+	s.notifyObserver(event, payload)
 	dndMode, err := s.store.GetDNDMode()
 	if err != nil || !dndMode {
 		return

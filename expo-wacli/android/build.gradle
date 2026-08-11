@@ -1,0 +1,48 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'com.wacli.expo'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(
+  project(":expo-modules-core").projectDir.absolutePath,
+  "ExpoModulesCorePlugin.gradle"
+)
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace "com.wacli.expo"
+  compileSdk 35
+
+  defaultConfig {
+    minSdk 24
+    targetSdk 35
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  // The gomobile AAR ships prebuilt .so files per ABI and no sources, so there is nothing to
+  // compile here — but it does mean the packaged app carries a copy of the Go runtime for every
+  // ABI it supports. Enable ABI splits in the app if that matters (see the README).
+  packagingOptions {
+    // gomobile's AAR and expo-modules-core can both carry a copy of these.
+    pickFirst '**/libc++_shared.so'
+  }
+}
+
+dependencies {
+  // Built by scripts/build-bindings.sh — see the README. Absent from git deliberately: it is a
+  // ~25 MB per-ABI build artifact, not source.
+  implementation files('libs/wacli.aar')
+}

@@ -34,6 +34,8 @@ party sees your messages.
   switch gates all outbound sends.
 - **Interfaces for humans** — a Bubble Tea terminal UI and an optional Wails
   desktop app for QR login and configuration.
+- **Runs on a phone** — the tree is CGO-free, so the same daemon compiles into a
+  React Native Expo app on Android and iOS. See [`expo-wacli/`](expo-wacli/).
 
 ## Install
 
@@ -136,6 +138,8 @@ wacli (single Go binary, package main)
 
 internal/daemonclient   typed Go client for the daemon API (reusable)
 desktop/                Wails desktop app (separate Go module)
+mobile/                 gomobile binding surface (Android/iOS)
+expo-wacli/             React Native Expo module wrapping it
 ```
 
 State directory: `~/.wacli` (override with `WACLI_HOME`).
@@ -157,6 +161,7 @@ State directory: `~/.wacli` (override with `WACLI_HOME`).
 - [CLI reference](docs/cli-reference.md) — every command and flag
 - [AI harness reference](docs/ai-harness-reference.md) — the JSON contract for agents
 - [Desktop UI reference](docs/desktop-ui-reference.md) — the Wails app
+- [Expo module](expo-wacli/README.md) — embedding wacli in an iOS/Android app
 
 ## Contributing
 
