@@ -140,6 +140,7 @@ internal/daemonclient   typed Go client for the daemon API (reusable)
 desktop/                Wails desktop app (separate Go module)
 mobile/                 gomobile binding surface (Android/iOS)
 expo-wacli/             React Native Expo module wrapping it
+expo-wacli/example/     demo Expo app showcasing it
 ```
 
 State directory: `~/.wacli` (override with `WACLI_HOME`).

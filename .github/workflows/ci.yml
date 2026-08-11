@@ -78,6 +78,14 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       - run: npx tsc --noEmit
 
+      # The example app is the module's only real consumer, so typechecking it is what catches an
+      # API change that compiles fine in isolation but breaks every caller.
+      - name: example app
+        working-directory: expo-wacli/example
+        run: |
+          npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+          npx tsc --noEmit
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

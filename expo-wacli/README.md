@@ -90,6 +90,16 @@ The Go runtime plus whatsmeow is ~20 MB per architecture. `abiFilters` defaults 
 `['arm64-v8a', 'x86_64']`; narrow it to `['arm64-v8a']` for release builds, or use ABI splits, so
 users download one slice rather than four.
 
+## Demo app
+
+[`example/`](example/) is a working app that links an account, lists chats, opens a conversation,
+sends, and updates live — the fastest way to see the whole thing working:
+
+```bash
+./scripts/build-bindings.sh
+cd example && npm install && npx expo prebuild --clean && npx expo run:android
+```
+
 ## Usage
 
 ```tsx

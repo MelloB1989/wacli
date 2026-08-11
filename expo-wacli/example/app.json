@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "wacli demo",
+    "slug": "expo-wacli-example",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "bundleIdentifier": "com.wacli.example",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.wacli.example"
+    },
+    "plugins": [
+      [
+        "expo-wacli",
+        {
+          "abiFilters": ["arm64-v8a"]
+        }
+      ]
+    ]
+  }
+}
