@@ -4,7 +4,6 @@
 
 - the WhatsApp daemon
 - the daemon client
-- the OpenClaw inbound bridge host
 
 Most commands below talk to the local daemon at `http://127.0.0.1:8765`.
 
@@ -39,12 +38,16 @@ wacli tui
 Common status commands:
 
 ```bash
+wacli version
 wacli status
 wacli sync
 wacli dnd
 wacli dnd on
 wacli dnd off
 ```
+
+`wacli status` reports the daemon's view when one is running and falls back to reading the local
+database directly when none answers, so it is also the way to check state with the daemon down.
 
 ## Chat Listing And Access Control
 
@@ -231,6 +234,141 @@ wacli media download --chat "Jio Phone" --message-id ABC123
 
 The returned file path will point into `~/.wacli/media/`.
 
+## Editing And Deleting Messages
+
+Edit a message already sent:
+
+```bash
+wacli edit --chat "Jio Phone" --id ABC123 --text "corrected text"
+```
+
+Delete (revoke for everyone):
+
+```bash
+wacli delete --chat "Jio Phone" --id ABC123
+```
+
+Inspect delivery and read receipts:
+
+```bash
+wacli receipts --id ABC123
+```
+
+Edit and delete are sends as far as the safety gates are concerned: both are refused while `DND` is
+off or the chat is locked.
+
+## Calls
+
+Calls carry audio rather than a live microphone: `--say` is spoken with text-to-speech, `--audio`
+plays a file. Placing a call is gated on `DND` like any other send.
+
+Place:
+
+```bash
+wacli call --to "Jio Phone" --say "Your order has shipped."
+wacli call --to 917569236628 --audio /absolute/path/notice.wav --repeat
+wacli call --to "Jio Phone" --video --ring-for 60
+```
+
+Place options:
+
+- `--say <text>` / `--voice <voice>` — speak on answer (`say -v '?'` lists voices)
+- `--audio <file>` — play a `.wav`/`.mp3`/`.opus` instead of `--say`
+- `--repeat` — loop the audio instead of hanging up when it ends
+- `--record <file.wav>` — write the other party's voice to a file
+- `--ring-for <seconds>` (default 45) or `--no-expire` to ring until ended
+- `--video`
+
+Inspect:
+
+```bash
+wacli call list
+wacli call list --active
+wacli call status
+wacli call queue
+```
+
+Calls are placed one at a time, so `queue` is what to check when a placement did not start
+immediately.
+
+Answer, reject, end:
+
+```bash
+wacli call answer --say "Please leave a message." --record /tmp/peer.wav
+wacli call reject --id <call-id>
+wacli call end --id <call-id> --reason "done"
+```
+
+`--id` defaults to the only ringing call, so it can be omitted when just one is in flight.
+
+Signalling capture, for debugging call setup:
+
+```bash
+wacli call capture
+wacli call capture --off
+wacli call dump --last 50
+```
+
+This records raw signalling stanzas, not audio — use `--record` on the call itself for that.
+
+## Groups
+
+List and inspect:
+
+```bash
+wacli groups list
+wacli groups info "Lyzn AI | Early access"
+```
+
+Create:
+
+```bash
+wacli groups create --name "Launch team" --members "917569236628,Anjali"
+```
+
+Membership. `--members` accepts phones, JIDs, or contact names:
+
+```bash
+wacli groups add --group "Launch team" --members 917569236628
+wacli groups remove --group "Launch team" --members 917569236628
+wacli groups promote --group "Launch team" --members Anjali
+wacli groups demote --group "Launch team" --members Anjali
+```
+
+Rename or set the topic:
+
+```bash
+wacli groups rename --group "Launch team" --name "Launch crew"
+wacli groups rename --group "Launch team" --topic "Ship by Friday"
+```
+
+Invite links:
+
+```bash
+wacli groups invite --group "Launch team"
+wacli groups invite --group "Launch team" --reset
+wacli groups join --link https://chat.whatsapp.com/… --preview
+wacli groups join --link https://chat.whatsapp.com/…
+```
+
+`--preview` reads the group behind a link without joining it. Do that first for an untrusted link.
+`--reset` revokes the previous link.
+
+Leave:
+
+```bash
+wacli groups leave --group "Launch team"
+```
+
+## Number Check
+
+Ask WhatsApp which numbers are registered. This is a network round trip, so pass them together
+rather than one at a time:
+
+```bash
+wacli check +15551234567,+15559876543
+```
+
 ## Webhooks
 
 List:
@@ -275,80 +413,62 @@ Notes:
 - Delivery attempts are persisted with request payload, status, HTTP status, and response/error text.
 - Successful and failed attempts are also written to the daemon journal.
 
-## OpenClaw Bridge
+## Triggers
 
-The OpenClaw bridge is separate from HTTP webhooks.
+Triggers are the rule engine: match an inbound event, run actions. They live in the daemon and are
+evaluated only for unlocked chats while `DND` is on.
 
-When an inbound message arrives in an unlocked chat while `DND` is on, `wacli` can:
-
-- look up or create a stable OpenClaw session UUID for that WhatsApp chat
-- dedupe by message id
-- invoke:
+List:
 
 ```bash
-openclaw agent --session-id <uuid> --message "<instruction + inbound event json>" --json
+wacli triggers list
 ```
 
-List bridges:
+Add:
 
 ```bash
-wacli openclaw list
+wacli triggers add --name "invoice" --match contains --pattern invoice --reply "Got it, forwarding to accounts."
+wacli triggers add --name "standup" --match regex --pattern '^standup' --scope groups --react 👍
+wacli triggers add --name "urgent" --match contains --pattern urgent --webhook https://example.com/hook
 ```
 
-Add a bridge for all unlocked chats:
+Matching:
+
+- `--match` is `always|contains|exact|prefix|suffix|regex` (default `contains`)
+- `--scope` is `all|dms|groups|list` (default `all`); with `list`, pass `--chats a,b,c`
+- `--events` is a comma-separated list of event kinds, defaulting to `incoming_message`
+
+Actions, any combination:
+
+- `--reply <text>`
+- `--media <file>`
+- `--react <emoji>`
+- `--forward <chat>`
+- `--webhook <url>`
+- `--mark-read`
+
+Ordering:
+
+- `--priority <int>` evaluates lowest first (default 100)
+- `--cooldown <seconds>` throttles re-firing per chat
+- `--continue` lets lower-priority rules run as well; otherwise the first match wins
+
+Enable, disable, remove:
 
 ```bash
-wacli openclaw add --scope all_unlocked --message-types text,image,video
+wacli triggers enable 3
+wacli triggers disable 3
+wacli triggers remove 3
 ```
 
-Add a bridge for one specific unlocked chat:
+Test a rule against a hypothetical message without sending anything:
 
 ```bash
-wacli openclaw add --chat "Jio Phone" --message-types text,image --instruction "Handle this WhatsApp conversation carefully."
+wacli triggers test --id 3 --chat "Jio Phone" --text "invoice attached"
 ```
 
-Use a custom executable path:
+Do this before enabling any rule whose action sends.
 
-```bash
-wacli openclaw add --command /absolute/path/openclaw --scope all_unlocked
-```
-
-Update the instruction later:
-
-```bash
-wacli openclaw update 3 --instruction "New bridge instruction"
-wacli openclaw update 3 --instruction-file /absolute/path/openclaw_instruction.txt
-```
-
-List stable session mappings:
-
-```bash
-wacli openclaw sessions
-wacli openclaw sessions --query Jio
-```
-
-Inspect bridge delivery logs:
-
-```bash
-wacli openclaw deliveries
-wacli openclaw deliveries --status failed
-wacli openclaw deliveries --query Jio
-```
-
-Remove a bridge:
-
-```bash
-wacli openclaw remove 3
-```
-
-Notes:
-
-- Selected-chat bridges only accept currently unlocked chats.
-- `--chat` can be repeated.
-- `--message-types` uses the same content vocabulary as message webhooks.
-- The OpenClaw prompt includes the same inbound payload used for message webhooks, plus the configured instruction text.
-- The actual session mapping is stable per WhatsApp chat, so DMs and groups keep separate continuity in OpenClaw.
-- Bridge delivery logs persist command, session id, status, request message, captured output, and error text.
 
 ## Auto-Replies
 

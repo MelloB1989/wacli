@@ -32,8 +32,9 @@ It also exposes a localhost HTTP API and matching CLI commands so an AI harness 
 - download received media
 - upload stories
 - manage contact memory
-- configure webhooks and auto-replies
-- route inbound WhatsApp messages into persistent OpenClaw sessions
+- configure webhooks, triggers, and auto-replies
+- place, answer, and end calls with synthesised or recorded audio
+- manage groups and set typing/online presence
 
 ## Core Rules
 
@@ -141,9 +142,13 @@ Key commands:
 - `wacli bulk-send --items-file items.json`
 - `wacli bulk-send --stdin-json`
 - `wacli media download --chat <reference> --message-id <id>`
-- `wacli webhooks list|add|remove`
-- `wacli openclaw list|add|update|remove|sessions`
+- `wacli webhooks list|add|remove|test|replay|deliveries`
 - `wacli auto-replies list|add|remove`
+- `wacli triggers list|add|enable|disable|remove|test`
+- `wacli groups list|info|create|add|remove|promote|demote|rename|invite|join|leave`
+- `wacli call [place] --to <reference> [--say <text> | --audio <file>] [--video]`
+- `wacli call list|status|queue|answer|reject|end|capture|dump`
+- `wacli check +15551234567,+15559876543`
 - `wacli api <METHOD> </path> [json-body]`
 
 Resolution rules:
@@ -171,6 +176,25 @@ Example response:
   "last_history_sync": "2026-04-12T13:14:15Z"
 }
 ```
+
+### `GET /config`
+
+Returns the same snapshot as `GET /status`. It exists for callers that read it as configuration
+rather than liveness; there is no separate config document.
+
+### `GET /logs`
+
+The daemon's own log records, newest first. Useful for explaining a failure that the API reported
+only as an error string.
+
+Query params:
+
+- `limit=<int>` (default 200)
+- `level=<level>`
+- `category=<category>`
+- `query=<search>`
+
+Returns `{ "logs": [ ... ] }`.
 
 ## DND API
 
@@ -361,6 +385,41 @@ Response:
 }
 ```
 
+### `POST /messages/edit`
+
+Edits a message already sent. Subject to the same gates as `/send`: refused while DND is off or the
+chat is locked.
+
+```json
+{ "chat": "Anjali", "id": "ABC123", "text": "corrected text" }
+```
+
+Returns `{ "ok": true, "message": { ... } }`.
+
+### `POST /messages/delete`
+
+Revokes a message for everyone. `DELETE` is accepted too, in which case `chat` and `id` may be query
+params instead of a body.
+
+```json
+{ "chat": "Anjali", "id": "ABC123" }
+```
+
+Returns `{ "ok": true, "deleted": "ABC123" }`.
+
+> Note the field names. These two routes take `chat` and `id`, while `/media/download` above takes
+> `chat_ref` and `message_id`. They are not interchangeable.
+
+### `GET /messages/receipts`
+
+Delivery and read receipts for one message.
+
+Query params:
+
+- `id=<message-id>` (required)
+
+Returns `{ "message_id": "ABC123", "receipts": [ ... ] }`.
+
 ## Send APIs
 
 ### `POST /send`
@@ -426,6 +485,153 @@ Notes:
 
 - DND must be on
 - image and video stories are the intended use case
+
+## Call APIs
+
+Calls are placed and answered with audio rather than a live microphone: `say` is spoken via
+text-to-speech, `audio` plays a file. Outbound calls are gated on DND like any other send.
+
+### `GET /calls`
+
+Lists calls. `?active=true` narrows to calls in progress.
+
+Returns `{ "calls": [ ... ] }`.
+
+### `POST /calls`
+
+Places a call.
+
+```json
+{
+  "to": "Anjali",
+  "video": false,
+  "ring_for_seconds": 30,
+  "no_expire": false,
+  "say": "Hello, this is an automated call.",
+  "voice": "en-US",
+  "audio": "/absolute/path/to/clip.wav",
+  "repeat": false,
+  "record": "/absolute/path/to/peer.wav"
+}
+```
+
+Only `to` is required. `say` and `audio` are alternatives; `repeat` loops the audio while the call
+is up, and `record` captures the peer's audio to that path. `no_expire` rings indefinitely and takes
+precedence over `ring_for_seconds`.
+
+Returns `{ "ok": true, "call": { ... } }`.
+
+### `GET /calls/status`
+
+Query params:
+
+- `ref=<call-id-or-chat-ref>` (`call_id` accepted as an alias)
+
+Returns `{ "call": { ... }, "queue": { ... } }`. 404 when no such call is known.
+
+### `GET /calls/queue`
+
+Returns `{ "queue": { ... } }` — calls waiting to be placed. Calls are serialised, so this is what to
+poll when a placement did not start immediately.
+
+### `POST /calls/answer`
+
+Answers a ringing inbound call with audio. Omit `call_id` to answer the current one.
+
+```json
+{ "call_id": "…", "say": "Leave a message after the tone", "voice": "en-US", "record": "/tmp/peer.wav" }
+```
+
+Returns `{ "ok": true, "call_id": "…" }`.
+
+### `POST /calls/end`
+
+```json
+{ "call_id": "…", "reason": "done" }
+```
+
+Ends an active call. Returns `{ "ok": true, "call": { ... } }`.
+
+### `POST /calls/reject`
+
+```json
+{ "call_id": "…" }
+```
+
+Rejects a ringing inbound call without answering it.
+
+### `POST /calls/capture`
+
+```json
+{ "enabled": true }
+```
+
+Toggles recording of raw call signalling stanzas for debugging. Returns the file being written as
+`path`. This is a diagnostic, not a call recorder — for peer audio use `record` on the call itself.
+
+## Group APIs
+
+### `GET /groups`
+
+Lists joined groups. With `?ref=<group>` returns one group's details instead, as `{ "group": {...} }`.
+
+### `POST /groups`
+
+```json
+{ "name": "Launch team", "participants": ["917569236628", "Anjali"] }
+```
+
+### `POST /groups/participants`
+
+```json
+{ "group": "Launch team", "action": "add", "participants": ["917569236628"] }
+```
+
+`action` is `add`, `remove`, `promote`, or `demote`. Returns `{ "ok": true, "participants": [ ... ] }`.
+
+### `POST /groups/update`
+
+```json
+{ "group": "Launch team", "name": "New name" }
+```
+
+Provide exactly one of `name`, `topic`, or `leave: true` — they are checked in that order and the
+first one present wins, so sending several silently ignores the rest.
+
+### `GET /groups/invite`
+
+Query params:
+
+- `group=<ref>`
+- `reset=true` to revoke the existing link and issue a new one
+
+Returns `{ "invite_link": "https://chat.whatsapp.com/…" }`.
+
+### `POST /groups/invite`
+
+```json
+{ "link": "https://chat.whatsapp.com/…", "preview": false }
+```
+
+Joins the group behind an invite link. With `preview: true` it only reads the group's details and
+does not join — do that first if the link is untrusted.
+
+## Presence API
+
+### `POST /presence`
+
+Two modes in one route. With `available` present it sets global online presence; otherwise it sets
+per-chat typing state.
+
+```json
+{ "chat": "Anjali", "typing": true }
+```
+
+```json
+{ "available": false }
+```
+
+`recording` is the voice-note equivalent of `typing`. Returns `{ "ok": true }`.
 
 ## Contact and Memory APIs
 
@@ -494,6 +700,63 @@ Request:
 ```
 
 This is the preferred update route for harnesses because it resolves human references first.
+
+### `POST /contacts/check`
+
+Asks WhatsApp which of a list of phone numbers are registered. This is a network round trip, not a
+local lookup, so batch the numbers rather than calling it per contact.
+
+```json
+{ "phones": ["917569236628", "15551234567"] }
+```
+
+Returns `{ "results": [ ... ] }`.
+
+## Trigger APIs
+
+Triggers are wacli's rule engine: match an event, run actions. They are policy that lives in the
+daemon, as opposed to webhooks, which are transport out to something else.
+
+### `GET /triggers`
+
+Returns `{ "triggers": [ ... ], "events": [ ... ] }`, where `events` is the list of event names a
+trigger may match — read it rather than guessing names.
+
+### `POST /triggers`
+
+Creates a trigger. The body is a trigger object; take its shape from `GET /triggers`.
+
+Returns `{ "ok": true, "trigger": { ... } }`.
+
+### `GET /triggers/{id}`
+
+Returns `{ "trigger": { ... } }`.
+
+### `PUT /triggers/{id}`
+
+Replaces a trigger. The id in the path wins over any id in the body.
+
+### `PATCH /triggers/{id}`
+
+Enables or disables without rewriting the rule:
+
+```json
+{ "enabled": false }
+```
+
+### `DELETE /triggers/{id}`
+
+Returns `{ "ok": true, "deleted": 3 }`.
+
+### `POST /triggers/test`
+
+Evaluates a trigger against a hypothetical message without sending anything.
+
+```json
+{ "id": 3, "chat": "Anjali", "text": "invoice attached" }
+```
+
+Returns `{ "ok": true, "result": { ... } }`. Use this before enabling a rule that sends.
 
 ## Webhook APIs
 
@@ -598,81 +861,38 @@ Message-oriented webhook payloads include:
 - contact memory for the sender when available
 - normalized `message_kinds` to support downstream routing by content type
 
-## OpenClaw Bridge
+### Webhook signatures
 
-The OpenClaw bridge is a separate automation target from HTTP webhooks.
+If a webhook has a `secret`, the daemon signs every delivery:
 
-On inbound messages in unlocked chats, while DND is on, `wacli` can:
-
-1. map `chat_jid` to one stable OpenClaw session UUID
-2. dedupe by `message_id`
-3. invoke:
-
-```bash
-openclaw agent --session-id <uuid> --message "<instruction + inbound event json>" --json
+```text
+X-WACLI-Signature:    sha256=<hex>
+X-WACLI-Signature-V1: v1=<hex>
+X-WACLI-Timestamp:    <unix seconds>
 ```
 
-The JSON sent to OpenClaw includes the same inbound event envelope used for message webhooks.
+`X-WACLI-Signature` is HMAC-SHA256 over the body alone and exists for consumers written against the
+original scheme. `X-WACLI-Signature-V1` is HMAC-SHA256 over `<timestamp> + "." + <body>`; verify that
+one and reject a timestamp too far from now, otherwise a captured request can be replayed forever.
 
-### `GET /openclaw_bridges`
+### `POST /webhooks/test`
 
-Lists bridge configurations.
-
-### `POST /openclaw_bridges`
+Delivers a synthetic event to one webhook so a consumer can be checked without waiting for real
+traffic.
 
 Request:
 
 ```json
-{
-  "command": "openclaw",
-  "scope": "selected_chats",
-  "chat_refs": [
-    "Jio Phone"
-  ],
-  "message_types": [
-    "text",
-    "image"
-  ],
-  "context_limit": 12,
-  "instruction": "Handle this WhatsApp conversation using wacli for all replies.",
-  "enabled": true
-}
+{ "id": 3 }
 ```
 
-Rules:
+Returns `{ "ok": true, "delivery": { ... } }`, where `ok` reflects whether the delivery reached the
+consumer, not whether the request was accepted.
 
-- `scope=all_unlocked` covers all unlocked chats.
-- `scope=selected_chats` only covers the selected unlocked chats.
-- creation is rejected if a selected chat is locked.
-- `message_types` filters which inbound content kinds are forwarded to OpenClaw.
+### `POST /webhook_deliveries/replay`
 
-### `PUT /openclaw_bridges/{id}`
-
-Updates a bridge config, including the instruction text.
-
-### `DELETE /openclaw_bridges/{id}`
-
-Deletes a bridge config.
-
-### `GET /openclaw_sessions`
-
-Lists stable WhatsApp chat to OpenClaw session mappings once inbound messages have been bridged.
-
-### `GET /openclaw_deliveries`
-
-Query params:
-
-- `limit=<int>`
-- `status=pending|done|failed`
-- `query=<search>`
-
-Returns persisted OpenClaw bridge executions, including session id, captured output, last error, and the exact request message that was sent to `openclaw agent`.
-
-If a secret is configured, the daemon sends:
-
-```text
-X-WACLI-Signature: sha256=<hex>
-```
+Re-sends a delivery that has already been recorded, by its delivery id. Same request and response
+shape as `/webhooks/test`. Use it after fixing a consumer that rejected an event.
 
 ## Auto-Reply APIs
 
