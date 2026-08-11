@@ -63,6 +63,7 @@ build_android() {
   [[ -n "$ndk" && -d "$ndk" ]] || die "Android NDK not found. Set ANDROID_NDK_HOME."
   log "building AAR with NDK at $ndk"
   mkdir -p "$module_dir/android/libs"
+  # androidapi 24 matches the minSdk expo-module-gradle-plugin applies for SDK 56.
   ANDROID_NDK_HOME="$ndk" gomobile bind \
     -target=android \
     -androidapi 24 \
@@ -80,9 +81,10 @@ build_ios() {
   mkdir -p "$module_dir/ios/Frameworks"
   # The output name sets the Swift module name: WacliModule.swift does `import Mobile`.
   rm -rf "$module_dir/ios/Frameworks/Mobile.xcframework"
+  # iosversion tracks ExpoModulesCore's deployment target for SDK 56, which the podspec also pins.
   gomobile bind \
     -target=ios,iossimulator \
-    -iosversion 15.1 \
+    -iosversion 16.4 \
     -ldflags "$ldflags" \
     -o "$module_dir/ios/Frameworks/Mobile.xcframework" \
     "$package"

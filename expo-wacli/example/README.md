@@ -13,13 +13,16 @@ running inside the app.
 - **Live events** driving the UI — every screen subscribes to `onEvent`
 - **Errors surfaced honestly** — a send refused because DND is off or the chat is locked shows
   wacli's own message rather than a generic failure
+- **Tap-to-copy pairing code** via `expo-clipboard` — you are about to retype eight characters into
+  WhatsApp on this same phone, with no second screen to read them off
 
 The app deliberately uses no navigation library. A four-case screen union in `App.tsx` keeps the
 interesting part of the code about wacli rather than about routing.
 
 ## Run it
 
-This is native code, so it needs a **dev client** — it cannot run in Expo Go.
+Built against **Expo SDK 56** (React Native 0.85, React 19). This is native code, so it needs a
+**dev client** — it cannot run in Expo Go.
 
 ```bash
 # 1. Build the native bindings (from the repo root)

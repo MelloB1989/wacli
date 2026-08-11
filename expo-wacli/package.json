@@ -19,6 +19,7 @@
     "directory": "expo-wacli"
   },
   "license": "MIT",
+  "author": "MelloB1989",
   "homepage": "https://github.com/MelloB1989/wacli/tree/main/expo-wacli",
   "files": [
     "build",
@@ -37,7 +38,7 @@
     "react-native": "*"
   },
   "devDependencies": {
-    "expo-module-scripts": "^4.0.0",
-    "expo": "^52.0.0"
+    "expo": "~56.0.19",
+    "expo-module-scripts": "~56.0.3"
   }
 }

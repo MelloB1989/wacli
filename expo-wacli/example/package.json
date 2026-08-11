@@ -11,17 +11,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "expo": "~52.0.0",
-    "expo-status-bar": "~2.0.0",
+    "expo": "~56.0.19",
+    "expo-clipboard": "~56.0.4",
+    "expo-status-bar": "~56.0.4",
     "expo-wacli": "file:..",
-    "react": "18.3.1",
-    "react-native": "0.76.5",
-    "react-native-qrcode-svg": "^6.3.2",
-    "react-native-safe-area-context": "4.12.0",
-    "react-native-svg": "15.8.0"
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
+    "react-native-qrcode-svg": "^6.3.2"
   },
   "devDependencies": {
-    "@types/react": "~18.3.12",
-    "typescript": "~5.3.3"
+    "@types/react": "~19.1.1",
+    "typescript": "~5.9.2"
   }
 }

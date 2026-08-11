@@ -1,48 +1,34 @@
-apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
+plugins {
+  id 'com.android.library'
+  // Supplies the compile/min/target SDK versions, the Kotlin and Java toolchains, the
+  // expo-modules-core dependency and the publishing setup — everything modules used to spell out by
+  // hand with applyKotlinExpoModulesCorePlugin()/useCoreDependencies(). Matching the first-party
+  // modules here means this module tracks the SDK's toolchain instead of pinning its own.
+  id 'expo-module-gradle-plugin'
+}
 
 group = 'com.wacli.expo'
 version = '0.1.0'
 
-def expoModulesCorePlugin = new File(
-  project(":expo-modules-core").projectDir.absolutePath,
-  "ExpoModulesCorePlugin.gradle"
-)
-apply from: expoModulesCorePlugin
-applyKotlinExpoModulesCorePlugin()
-useCoreDependencies()
-useExpoPublishing()
-
 android {
   namespace "com.wacli.expo"
-  compileSdk 35
 
   defaultConfig {
-    minSdk 24
-    targetSdk 35
+    versionCode 1
+    versionName '0.1.0'
     consumerProguardFiles 'consumer-rules.pro'
   }
 
-  compileOptions {
-    sourceCompatibility JavaVersion.VERSION_17
-    targetCompatibility JavaVersion.VERSION_17
-  }
-
-  kotlinOptions {
-    jvmTarget = "17"
-  }
-
-  // The gomobile AAR ships prebuilt .so files per ABI and no sources, so there is nothing to
-  // compile here — but it does mean the packaged app carries a copy of the Go runtime for every
-  // ABI it supports. Enable ABI splits in the app if that matters (see the README).
   packagingOptions {
-    // gomobile's AAR and expo-modules-core can both carry a copy of these.
+    // The gomobile AAR and expo-modules-core can each carry a copy of this.
     pickFirst '**/libc++_shared.so'
   }
 }
 
 dependencies {
   // Built by scripts/build-bindings.sh — see the README. Absent from git deliberately: it is a
-  // ~25 MB per-ABI build artifact, not source.
+  // ~25 MB per-ABI build artifact, not source. The AAR ships prebuilt .so files and no sources, so
+  // the packaged app carries a copy of the Go runtime for every ABI it keeps; narrow that with the
+  // config plugin's abiFilters.
   implementation files('libs/wacli.aar')
 }

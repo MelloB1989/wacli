@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import * as Clipboard from 'expo-clipboard';
 import * as Wacli from 'expo-wacli';
 
 import { errorMessage } from '../format';
@@ -26,6 +27,7 @@ export function LoginScreen({ onPaired }: { onPaired: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // onPaired lands in an effect that must not re-subscribe when the parent re-renders, so it is
   // held in a ref rather than listed as a dependency.
@@ -88,6 +90,12 @@ export function LoginScreen({ onPaired }: { onPaired: () => void }) {
     }
   }
 
+  async function copyCode(code: string) {
+    await Clipboard.setStringAsync(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   async function reset() {
     await Wacli.cancelLogin().catch(() => {});
     setPairingCode(null);
@@ -95,6 +103,7 @@ export function LoginScreen({ onPaired }: { onPaired: () => void }) {
     setBusy(false);
     setError(null);
     setNote(null);
+    setCopied(false);
   }
 
   const showingCode = pairingCode !== null || qrCode !== null;
@@ -164,7 +173,15 @@ export function LoginScreen({ onPaired }: { onPaired: () => void }) {
         {pairingCode && (
           <View style={styles.codeCard}>
             <Text style={styles.codeLabel}>Enter this in WhatsApp</Text>
-            <Text style={styles.code}>{formatPairingCode(pairingCode)}</Text>
+            {/*
+              Tapping to copy matters more here than it looks: the user is about to switch to
+              WhatsApp and type eight characters from memory, and this is the same phone, so there
+              is no second screen to read them off.
+            */}
+            <Pressable onPress={() => copyCode(pairingCode)}>
+              <Text style={styles.code}>{formatPairingCode(pairingCode)}</Text>
+            </Pressable>
+            <Text style={styles.copyHint}>{copied ? 'Copied' : 'Tap the code to copy'}</Text>
             <Text style={styles.codeSteps}>
               WhatsApp → Settings → Linked Devices → Link a device → Link with phone number instead
             </Text>
@@ -285,6 +302,7 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     fontVariant: ['tabular-nums'],
   },
+  copyHint: { color: theme.accent, fontSize: 12 },
   codeSteps: { color: theme.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19 },
   qrFrame: { backgroundColor: '#ffffff', padding: space.lg, borderRadius: radius.md },
   note: { color: theme.accent, textAlign: 'center' },

@@ -50,6 +50,20 @@ the OEM task-killers (Xiaomi, Oppo, Samsung) will still kill the process on thei
 connection watchdog reconnects, and Android 14's `dataSync` service type carries a daily runtime
 budget you should measure against your usage.
 
+## Requirements
+
+| | |
+|---|---|
+| Expo SDK | 56 |
+| React Native | 0.85 · React 19 |
+| iOS | 16.4+ (ExpoModulesCore's floor for this SDK) |
+| Android | minSdk 24, compileSdk 36 |
+| Go | 1.25+, to build the bindings |
+
+Versions are pinned to what `expo` bundles for SDK 56, so `npx expo install --check` stays quiet.
+The one dependency Expo does not bundle is `react-native-qrcode-svg` — there is no first-party QR
+*generator* in the SDK — but it renders through `react-native-svg`, which is bundled.
+
 ## Install
 
 The module lives in this repo. Point your app at it:

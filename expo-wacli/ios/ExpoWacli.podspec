@@ -1,14 +1,22 @@
+require 'json'
+
+package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
+
 Pod::Spec.new do |s|
   s.name           = 'ExpoWacli'
-  s.version        = '0.1.0'
-  s.summary        = 'Run wacli inside a React Native Expo app.'
-  s.description    = 'Expo module wrapping the wacli WhatsApp automation daemon, bound for iOS with gomobile.'
-  s.author         = 'MelloB1989'
-  s.homepage       = 'https://github.com/MelloB1989/wacli'
-  s.license        = { :type => 'MIT' }
-  s.platforms      = { :ios => '15.1', :tvos => '15.1' }
+  s.version        = package['version']
+  s.summary        = package['description']
+  s.description    = package['description']
+  s.license        = package['license']
+  s.author         = package['author']
+  s.homepage       = package['homepage']
+  # Tracks expo-modules-core's own floor for SDK 56. Raising it here would break apps that build
+  # fine against the rest of the SDK; lowering it would not link.
+  s.platforms      = {
+    :ios => '16.4'
+  }
   s.swift_version  = '5.9'
-  s.source         = { :git => 'https://github.com/MelloB1989/wacli.git' }
+  s.source         = { git: 'https://github.com/MelloB1989/wacli.git' }
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
@@ -17,7 +25,7 @@ Pod::Spec.new do |s|
   # slice per architecture, not source.
   s.vendored_frameworks = 'Frameworks/Mobile.xcframework'
 
-  # Scoped to this directory so the vendored framework's own headers are not swept into the build.
+  # Scoped so the vendored framework's own headers are not swept into the build.
   s.source_files = '*.swift'
 
   s.pod_target_xcconfig = {
