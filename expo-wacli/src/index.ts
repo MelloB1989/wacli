@@ -8,6 +8,9 @@ import type {
   MessageRecord,
   SendMessageOptions,
   StatusSnapshot,
+  VoiceCallHandlers,
+  VoiceCallOptions,
+  VoiceCallState,
   WacliModuleEvents,
 } from './Wacli.types';
 
@@ -278,4 +281,59 @@ export function setChatLocked(jid: string, locked: boolean): Promise<void> {
 function withQuery(path: string, query: URLSearchParams): string {
   const encoded = query.toString();
   return encoded ? `${path}?${encoded}` : path;
+}
+
+/**
+ * Store a pre-rendered line so it can play with no network round trip.
+ *
+ * `pcm` is base64-encoded signed 16-bit little-endian, 16 kHz, mono — the format the call carries
+ * natively. Call this before {@link startVoiceCall}; a cached greeting is what lets Nani speak the
+ * instant the other party picks up.
+ */
+export function addCachedLine(id: string, pcm: string): Promise<void> {
+  return WacliModule.addCachedLine(id, pcm);
+}
+
+/** Drop every cached line. Do this between contacts — one grandmother's greeting played to another is very noticeable. */
+export function clearCachedLines(): void {
+  WacliModule.clearCachedLines();
+}
+
+/**
+ * Ring a contact and bridge the call to the relay for a live conversation.
+ *
+ * Resolves once the call is offered; everything after that arrives on the handlers. Audio is
+ * handled entirely inside the native module — it never crosses into JavaScript, because marshalling
+ * 60 ms frames across the bridge would add latency and jitter for no benefit.
+ */
+export function startVoiceCall(
+  options: VoiceCallOptions,
+  handlers: VoiceCallHandlers = {},
+): Promise<void> {
+  const stateSub = WacliModule.addListener('onVoiceState', ({ state }: { state: VoiceCallState }) =>
+    handlers.onState?.(state),
+  );
+  const transcriptSub = WacliModule.addListener(
+    'onVoiceTranscript',
+    ({ text, final }: { text: string; final: boolean }) => handlers.onTranscript?.(text, final),
+  );
+  const endedSub = WacliModule.addListener('onVoiceEnded', ({ reason }: { reason: string }) => {
+    stateSub.remove();
+    transcriptSub.remove();
+    endedSub.remove();
+    handlers.onEnded?.(reason);
+  });
+
+  return WacliModule.startVoiceCall(
+    options.to,
+    options.relayUrl,
+    options.token,
+    options.language ?? '',
+    options.voice ?? '',
+  );
+}
+
+/** Hang up the call in progress. Safe to call when there is none. */
+export function endVoiceCall(reason = 'ended by app'): Promise<void> {
+  return WacliModule.endVoiceCall(reason);
 }

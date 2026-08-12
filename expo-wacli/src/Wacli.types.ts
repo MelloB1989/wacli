@@ -107,3 +107,36 @@ export type ListMessagesOptions = {
   before?: Date;
   after?: Date;
 };
+
+/** Options for a streaming voice call. */
+export type VoiceCallOptions = {
+  /** Phone number in international format, or any reference the API accepts. */
+  to: string;
+  /** wss:// endpoint that runs the conversation. */
+  relayUrl: string;
+  /** Session token authorising this one call. */
+  token: string;
+  /** Speech language code, e.g. "hi-IN". */
+  language?: string;
+  /** Speaker id for synthesis. */
+  voice?: string;
+};
+
+/** Lifecycle of a streaming call. */
+export type VoiceCallState =
+  | 'dialling'
+  | 'ringing'
+  | 'connected'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'ended';
+
+/** Callbacks for a streaming call. Audio never crosses this boundary. */
+export type VoiceCallHandlers = {
+  onState?: (state: VoiceCallState) => void;
+  /** The other party's speech. Partial results arrive with `final` false. */
+  onTranscript?: (text: string, final: boolean) => void;
+  /** Fires exactly once, whatever ended the call. */
+  onEnded?: (reason: string) => void;
+};
