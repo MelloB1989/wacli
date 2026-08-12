@@ -38,6 +38,24 @@ declare class WacliNativeModule extends NativeModule<WacliModuleEvents> {
   logout(): Promise<void>;
   /** The wacli version the native bindings were built from. */
   getVersion(): Promise<string>;
+
+  /** Store a pre-rendered line as base64 s16le 16 kHz mono PCM. */
+  addCachedLine(id: string, pcm: string): Promise<void>;
+  /** Drop every cached line. */
+  clearCachedLines(): void;
+  /**
+   * Ring a contact and bridge the call to the relay. Progress arrives on the `onVoice*` events.
+   * Audio stays inside the native module and never crosses this boundary.
+   */
+  startVoiceCall(
+    to: string,
+    relayUrl: string,
+    token: string,
+    language: string,
+    voice: string,
+  ): Promise<void>;
+  /** Hang up the call in progress. */
+  endVoiceCall(reason: string): Promise<void>;
 }
 
 export default requireNativeModule<WacliNativeModule>('Wacli');

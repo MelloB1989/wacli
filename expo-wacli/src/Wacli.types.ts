@@ -79,7 +79,23 @@ export type WacliModuleEvents = {
   onLoginStatus: (params: { status: LoginStatus }) => void;
   /** A login attempt failed. */
   onLoginError: (params: { message: string }) => void;
+  /** A streaming call changed lifecycle state. */
+  onVoiceState: (params: { state: VoiceCallState }) => void;
+  /** The other party's speech during a streaming call. */
+  onVoiceTranscript: (params: { text: string; final: boolean }) => void;
+  /** A streaming call ended. Fires exactly once. */
+  onVoiceEnded: (params: { reason: string }) => void;
 };
+
+/** Lifecycle of a streaming call. */
+export type VoiceCallState =
+  | 'dialling'
+  | 'ringing'
+  | 'connected'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'ended';
 
 export type SendMessageOptions = {
   /** Phone number, JID, or contact name — wacli resolves all three. */
@@ -121,16 +137,6 @@ export type VoiceCallOptions = {
   /** Speaker id for synthesis. */
   voice?: string;
 };
-
-/** Lifecycle of a streaming call. */
-export type VoiceCallState =
-  | 'dialling'
-  | 'ringing'
-  | 'connected'
-  | 'listening'
-  | 'thinking'
-  | 'speaking'
-  | 'ended';
 
 /** Callbacks for a streaming call. Audio never crosses this boundary. */
 export type VoiceCallHandlers = {
