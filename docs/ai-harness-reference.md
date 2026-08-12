@@ -521,6 +521,47 @@ precedence over `ring_for_seconds`.
 
 Returns `{ "ok": true, "call": { ... } }`.
 
+### `POST /calls/stream`
+
+Places a call that carries a live two-way conversation instead of a fixed clip.
+
+```json
+{
+  "to": "Anjali",
+  "relay_url": "wss://relay.example.com/v1/call",
+  "token": "<scoped session token>",
+  "language": "hi-IN",
+  "voice": "anushka",
+  "ring_for_seconds": 45,
+  "cached_lines": { "greeting": "<base64 s16le 16 kHz mono PCM>" }
+}
+```
+
+`to`, `relay_url` and `token` are required. The relay is dialled *before* the call is offered, so
+the speech and model streams are already warm when the peer answers.
+
+Audio is bridged entirely inside the daemon: the peer's voice goes up the relay socket as 16 kHz
+mono PCM and synthesised audio comes back down the same socket. Nothing about the audio is
+reachable over this API — only the control events below.
+
+`cached_lines` are pre-rendered clips keyed by id. `greeting` plays the moment the peer picks up,
+and the relay can trigger any other id with a `play_cached` event. A cached line costs no network
+round trip, which is the difference between a call that feels responsive and one that does not.
+Hosts embedding the daemon should prefer the `AddCachedLine` binding over base64 here.
+
+Unlike `POST /calls` this does not queue behind a call already in progress; it fails instead, on the
+grounds that a scheduled conversation starting several minutes late is worse than one that reports
+it could not start.
+
+Returns `{ "ok": true, "call": { ... } }`.
+
+Progress arrives as events (`GET /logs`, a webhook subscription, or the embedded event handler):
+
+- `call_state` — `{ "call_id", "state" }` where state is `ringing`, `connected`, `listening`,
+  `thinking`, `speaking` or `ended`
+- `call_transcript` — `{ "call_id", "text", "final" }`, the peer's speech
+- `call_ended` — `{ "call_id", "reason" }`, exactly once
+
 ### `GET /calls/status`
 
 Query params:

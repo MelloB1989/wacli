@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -422,6 +423,70 @@ func NewHTTPHandler(service *Service) http.Handler {
 		default:
 			writeMethodNotAllowed(w)
 		}
+	})
+
+	mux.HandleFunc("/calls/stream", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			To       string `json:"to"`
+			RelayURL string `json:"relay_url"`
+			Token    string `json:"token"`
+			Language string `json:"language,omitempty"`
+			Voice    string `json:"voice,omitempty"`
+			RingFor  int    `json:"ring_for_seconds,omitempty"`
+			NoExpire bool   `json:"no_expire,omitempty"`
+			// CachedLines is base64 s16le 16 kHz mono PCM per scripted-line id. Sending it up front
+			// is what lets the greeting play the instant the peer answers.
+			CachedLines map[string]string `json:"cached_lines,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(body.To) == "" {
+			writeError(w, http.StatusBadRequest, errors.New("to is required"))
+			return
+		}
+		if strings.TrimSpace(body.RelayURL) == "" || strings.TrimSpace(body.Token) == "" {
+			writeError(w, http.StatusBadRequest, errors.New("relay_url and token are required"))
+			return
+		}
+
+		cached := make(map[string][]byte, len(body.CachedLines))
+		for id, encoded := range body.CachedLines {
+			pcm, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("cached line %q: %w", id, err))
+				return
+			}
+			cached[id] = pcm
+		}
+
+		opts := VoiceStreamOptions{
+			RelayURL:    body.RelayURL,
+			Token:       body.Token,
+			Language:    body.Language,
+			Voice:       body.Voice,
+			CachedLines: cached,
+		}
+		switch {
+		case body.NoExpire:
+			opts.RingFor = -1
+		case body.RingFor > 0:
+			opts.RingFor = time.Duration(body.RingFor) * time.Second
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		info, err := service.PlaceStreamingCall(ctx, body.To, opts)
+		if err != nil {
+			writeError(w, automationStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
 	})
 
 	mux.HandleFunc("/calls/status", func(w http.ResponseWriter, r *http.Request) {
