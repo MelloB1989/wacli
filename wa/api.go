@@ -126,6 +126,32 @@ func NewHTTPHandler(service *Service) http.Handler {
 		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 		limit := queryInt(r, "limit", 10)
 		allowDirect := queryBool(r, "allow_direct", false)
+
+		// best=1 asks for the decision rather than the list: the one target this
+		// ref means, or a 409 saying it means several. Callers that resolve
+		// before sending had to re-implement the "is one of these the clear
+		// winner" rule to use /resolve at all, and a second copy of that
+		// threshold is a copy that drifts.
+		if queryBool(r, "best", false) {
+			target, err := service.ResolveBestTarget(ref, kind, allowDirect)
+			if err != nil {
+				var ambiguous *AmbiguousReferenceError
+				if errors.As(err, &ambiguous) {
+					writeJSON(w, http.StatusConflict, map[string]any{
+						"ok":         false,
+						"error":      err.Error(),
+						"candidates": ambiguous.Candidates,
+						"hint":       "retry with one of the candidate JIDs",
+					})
+					return
+				}
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"match": target})
+			return
+		}
+
 		results, err := service.ResolveTargets(ref, kind, limit, allowDirect)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -254,6 +280,20 @@ func NewHTTPHandler(service *Service) http.Handler {
 		}
 		resolved, err := service.ResolveBestTarget(body.To, "chat", true)
 		if err != nil {
+			// Refusing to send is right — guessing which "Dev" was meant sends a
+			// message to the wrong person, which cannot be taken back. But the
+			// caller can only choose if it is handed the candidates, so they
+			// travel as data rather than flattened into the error string.
+			var ambiguous *AmbiguousReferenceError
+			if errors.As(err, &ambiguous) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"ok":         false,
+					"error":      err.Error(),
+					"candidates": ambiguous.Candidates,
+					"hint":       "retry with one of the candidate JIDs",
+				})
+				return
+			}
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
