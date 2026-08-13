@@ -52,11 +52,11 @@ public class WacliModule: Module {
 
     AsyncFunction("start") { () throws in
       try self.ensureConfigured()
-      try MobileStart()
+      try wacli { MobileStart($0) }
     }
 
     AsyncFunction("stop") { () throws in
-      try MobileStop()
+      try wacli { MobileStop($0) }
     }
 
     AsyncFunction("isPaired") { () throws -> Bool in
@@ -73,11 +73,11 @@ public class WacliModule: Module {
     }
 
     AsyncFunction("request") { (method: String, path: String, body: String?) throws -> String in
-      try MobileRequest(method, path, body ?? "")
+      try wacli { MobileRequest(method, path, body ?? "", $0) }
     }
 
     AsyncFunction("exec") { (line: String) throws -> String in
-      try MobileExec(line)
+      try wacli { MobileExec(line, $0) }
     }
 
     AsyncFunction("execCommands") { () -> String in
@@ -86,12 +86,12 @@ public class WacliModule: Module {
 
     AsyncFunction("loginWithQR") { () throws in
       try self.ensureConfigured()
-      try MobileStartLogin(self.loginBridge())
+      try wacli { MobileStartLogin(self.loginBridge(), $0) }
     }
 
     AsyncFunction("loginWithPhone") { (phone: String) throws in
       try self.ensureConfigured()
-      try MobileStartPairingLogin(self.loginBridge(), phone)
+      try wacli { MobileStartPairingLogin(self.loginBridge(), phone, $0) }
     }
 
     AsyncFunction("cancelLogin") {
@@ -99,7 +99,7 @@ public class WacliModule: Module {
     }
 
     AsyncFunction("logout") { () throws in
-      try MobileLogout()
+      try wacli { MobileLogout($0) }
     }
 
     AsyncFunction("getVersion") { () -> String in
@@ -111,7 +111,7 @@ public class WacliModule: Module {
       if self.shouldResumeOnForeground {
         // Errors here are not actionable — the app is on its way out — but leaving the databases
         // open into a freeze is what corrupts them, so the attempt matters.
-        try? MobileStop()
+        try? wacli { MobileStop($0) }
       }
     }
 
@@ -119,7 +119,7 @@ public class WacliModule: Module {
       guard self.shouldResumeOnForeground, !MobileIsRunning() else { return }
       self.shouldResumeOnForeground = false
       do {
-        try MobileStart()
+        try wacli { MobileStart($0) }
         // Tell JS the connection was re-established so it can refresh: anything that arrived while
         // the app was away is in the database now, not in the event stream it was listening to.
         self.sendEvent("onEvent", [
@@ -150,7 +150,7 @@ public class WacliModule: Module {
     )
     let home = base.appendingPathComponent("wacli", isDirectory: true)
     try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-    try MobileConfigure(home.path)
+    try wacli { MobileConfigure(home.path, $0) }
     configured = true
   }
 
@@ -164,8 +164,28 @@ public class WacliModule: Module {
   }
 }
 
+/**
+ Call a gomobile binding that reports failure through a trailing `NSError**`.
+
+ gobind emits these as free C functions carrying no `swift_error` annotation, so Swift does not fold
+ the error parameter into `throws` the way it does for Objective-C methods — the pointer has to be
+ passed explicitly and the result checked by hand. Wrapping that here keeps the detail in one place
+ instead of at twelve call sites.
+ */
+@discardableResult
+private func wacli<T>(_ body: (NSErrorPointer) -> T) throws -> T {
+  var error: NSError?
+  let result = body(&error)
+  if let error { throw error }
+  return result
+}
+
 /// Adapts the Go `EventHandler` protocol to a Swift closure.
-private class EventBridge: NSObject, MobileEventHandler {
+///
+/// `MobileEventHandlerProtocol`, not `MobileEventHandler`: gobind emits both a protocol and a class
+/// under that one Objective-C name, and Swift, which cannot have both, renames the protocol. Naming
+/// the class here instead reads as a second superclass.
+private class EventBridge: NSObject, MobileEventHandlerProtocol {
   private let handler: (String, String) -> Void
 
   init(_ handler: @escaping (String, String) -> Void) {
@@ -178,7 +198,7 @@ private class EventBridge: NSObject, MobileEventHandler {
 }
 
 /// Adapts the Go `LoginHandler` protocol to Swift closures.
-private class LoginBridge: NSObject, MobileLoginHandler {
+private class LoginBridge: NSObject, MobileLoginHandlerProtocol {
   private let onQR: (String) -> Void
   private let onPairing: (String) -> Void
   private let onStatus: (String) -> Void
