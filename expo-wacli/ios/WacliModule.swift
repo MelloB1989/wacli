@@ -27,6 +27,12 @@ public class WacliModule: Module {
   private var shouldResumeOnForeground = false
   private var configured = false
 
+  /// The handler bridging the call in progress back to JavaScript. See `startVoiceCall` for why it
+  /// is held rather than passed and forgotten. Not cleared in `onEnded` — releasing an object from
+  /// inside its own callback is a use-after-free waiting for a slow day — so it is replaced on the
+  /// next call and dropped if the call fails to start.
+  private var voiceBridge: VoiceBridge?
+
   public func definition() -> ModuleDefinition {
     Name("Wacli")
 
@@ -35,7 +41,10 @@ public class WacliModule: Module {
       "onLoginQRCode",
       "onLoginPairingCode",
       "onLoginStatus",
-      "onLoginError"
+      "onLoginError",
+      "onVoiceState",
+      "onVoiceTranscript",
+      "onVoiceEnded"
     )
 
     OnCreate {
@@ -104,6 +113,80 @@ public class WacliModule: Module {
 
     AsyncFunction("getVersion") { () -> String in
       MobileVersion()
+    }
+
+    // ---- streaming voice ----
+    //
+    // Audio does not appear here. Go owns the relay socket end to end; this boundary carries only
+    // the cached lines going in and state and transcripts coming back.
+
+    AsyncFunction("addCachedLine") { (id: String, pcm: String) throws in
+      guard let data = Data(base64Encoded: pcm) else {
+        throw InvalidBase64Exception("pcm")
+      }
+      try wacli { MobileAddCachedLine(id, data, $0) }
+    }
+
+    // Synchronous, matching the TypeScript declaration: an AsyncFunction here would hand JavaScript
+    // a promise where it expects void, and the mismatch is invisible until a caller awaits nothing.
+    Function("clearCachedLines") {
+      MobileClearCachedLines()
+    }
+
+    AsyncFunction("startVoiceCall") {
+      (to: String, relayURL: String, token: String, language: String, voice: String) throws in
+      let bridge = VoiceBridge(
+        emitState: { [weak self] state in
+          self?.sendEvent("onVoiceState", ["state": state])
+        },
+        emitTranscript: { [weak self] text, final in
+          self?.sendEvent("onVoiceTranscript", ["text": text, "final": final])
+        },
+        emitEnded: { [weak self] reason in
+          self?.sendEvent("onVoiceEnded", ["reason": reason])
+        }
+      )
+
+      // Held for the duration of the call. Go keeps its own proxy reference, but the only strong
+      // reference on this side would otherwise fall out of scope the moment this function returns —
+      // and it returns as soon as the call is *offered*, with the whole conversation still ahead.
+      self.voiceBridge = bridge
+
+      do {
+        try wacli { MobileStartVoiceCall(to, relayURL, token, language, voice, bridge, $0) }
+      } catch {
+        // No call was placed, so OnEnded will never fire and nothing else will clear this.
+        self.voiceBridge = nil
+        throw error
+      }
+    }
+
+    AsyncFunction("endVoiceCall") { (reason: String) throws in
+      try wacli { MobileEndVoiceCall(reason, $0) }
+    }
+
+    // ---- session handover ----
+
+    AsyncFunction("exportSession") { () throws -> String in
+      guard let blob = try wacli({ MobileExportSession($0) }) else {
+        throw NoSessionException()
+      }
+      return blob.base64EncodedString()
+    }
+
+    AsyncFunction("importSession") { (base64: String) throws in
+      guard let blob = Data(base64Encoded: base64) else {
+        throw InvalidBase64Exception("session")
+      }
+      try wacli { MobileImportSession(blob, $0) }
+    }
+
+    AsyncFunction("hasSession") { () -> Bool in
+      MobileHasSession()
+    }
+
+    AsyncFunction("releaseSession") { () throws in
+      try wacli { MobileReleaseSession($0) }
     }
 
     OnAppEntersBackground {
@@ -220,4 +303,39 @@ private class LoginBridge: NSObject, MobileLoginHandlerProtocol {
   func onPairingCode(_ code: String?) { onPairing(code ?? "") }
   func onStatus(_ status: String?) { onStatus(status ?? "") }
   func onError(_ message: String?) { onError(message ?? "unknown error") }
+}
+
+/// Adapts the Go `VoiceHandler` protocol to Swift closures.
+///
+/// The closures are named `emit…` rather than `on…` on purpose. A stored property and a protocol
+/// method sharing a base name puts both in scope inside the method body, and the call then resolves
+/// on argument type alone — `String` to the closure, `String?` to the method. It happens to pick the
+/// closure, but the alternative is silent infinite recursion, and nothing at the call site shows
+/// which one won. Different names make the question not arise.
+private class VoiceBridge: NSObject, MobileVoiceHandlerProtocol {
+  private let emitState: (String) -> Void
+  private let emitTranscript: (String, Bool) -> Void
+  private let emitEnded: (String) -> Void
+
+  init(
+    emitState: @escaping (String) -> Void,
+    emitTranscript: @escaping (String, Bool) -> Void,
+    emitEnded: @escaping (String) -> Void
+  ) {
+    self.emitState = emitState
+    self.emitTranscript = emitTranscript
+    self.emitEnded = emitEnded
+  }
+
+  func onState(_ state: String?) { emitState(state ?? "") }
+  func onTranscript(_ text: String?, final: Bool) { emitTranscript(text ?? "", final) }
+  func onEnded(_ reason: String?) { emitEnded(reason ?? "ended") }
+}
+
+internal final class InvalidBase64Exception: GenericException<String> {
+  override var reason: String { "\(param) is not valid base64" }
+}
+
+internal final class NoSessionException: Exception {
+  override var reason: String { "there is no session on this device to export" }
 }
