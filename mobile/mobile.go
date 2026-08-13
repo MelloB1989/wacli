@@ -343,7 +343,14 @@ func runLogin(
 			if pairRequested {
 				continue
 			}
-			code, err := svc.Client().PairPhone(ctx, pairPhone, false, whatsmeow.PairClientChrome, "wacli (mobile)")
+			// "Chrome (Linux)", not a wacli-branded string: this goes to WhatsApp verbatim as
+			// companion_platform_display, and it has to agree with the platform declared alongside
+			// it — PairClientChrome here, which whatsmeow otherwise derives from
+			// store.DeviceProps.PlatformType. A display that does not match the platform is
+			// rejected, and the rejection arrives as a bare "info query returned status 400".
+			// The string is what WhatsApp shows under Linked Devices, so it is cosmetic to us and
+			// load-bearing to them.
+			code, err := svc.Client().PairPhone(ctx, pairPhone, false, whatsmeow.PairClientChrome, "Chrome (Linux)")
 			if err != nil {
 				handler.OnError(fmt.Sprintf("pair phone: %v", err))
 				return
