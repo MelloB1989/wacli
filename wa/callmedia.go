@@ -284,8 +284,14 @@ func openAudioSource(path string) (meowcaller.AudioSource, error) {
 // synthesiseSpeech renders text to a WAV with the macOS speech synthesiser, so --say needs nothing
 // installed. afconvert is only involved because `say` writes AIFF.
 func synthesiseSpeech(text, voice string) (string, error) {
+	// Sarvam first when it is configured: it runs anywhere, and the macOS path
+	// below is unavailable on the machine this daemon actually runs on.
+	if sarvamConfigured() {
+		return synthesiseWithSarvam(text, voice)
+	}
 	if _, err := exec.LookPath("say"); err != nil {
-		return "", errors.New("--say needs the macOS `say` command; pass --audio <file> instead")
+		return "", errors.New("--say needs either SARVAM_API_KEY set for speech synthesis, " +
+			"or the macOS `say` command; otherwise pass --audio <file>")
 	}
 	aiff, err := os.CreateTemp("", "wacli-say-*.aiff")
 	if err != nil {
