@@ -25,6 +25,12 @@ Pod::Spec.new do |s|
   # slice per architecture, not source.
   s.vendored_frameworks = 'Frameworks/Mobile.xcframework'
 
+  # Go's net package resolves DNS through libresolv on Darwin, and gomobile always builds through
+  # cgo, so the Go runtime lands references to res_9_ninit/nclose/nsearch in the vendored framework.
+  # Nothing else in an Expo app links libresolv, so without this the host app fails at link time
+  # with three undefined symbols and no hint that they belong to Go.
+  s.libraries = 'resolv'
+
   # Scoped so the vendored framework's own headers are not swept into the build.
   s.source_files = '*.swift'
 
