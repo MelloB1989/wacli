@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import Mobile
+import UIKit
 
 /**
  Expo module bridging JavaScript to the wacli Go runtime.
@@ -26,6 +27,9 @@ public class WacliModule: Module {
   /// whether to bring it back or leave it alone.
   private var shouldResumeOnForeground = false
   private var configured = false
+
+  /// Held only while a login is in flight and the app is in the background. See `beginLoginGrace`.
+  private var loginGrace: UIBackgroundTaskIdentifier = .invalid
 
   /// The handler bridging the call in progress back to JavaScript. See `startVoiceCall` for why it
   /// is held rather than passed and forgotten. Not cleared in `onEnded` — releasing an object from
@@ -190,6 +194,14 @@ public class WacliModule: Module {
     }
 
     OnAppEntersBackground {
+      // A login in progress is not a session to be tidied away. Pairing by code is typed into
+      // WhatsApp on this same phone, so leaving the app is a step inside the flow — and the socket
+      // being stopped here is the one the pairing completes over. Keep it up and ask iOS for as
+      // long as it will give us, which is the whole budget the user has to go and type the code.
+      if MobileIsLoggingIn() {
+        self.beginLoginGrace()
+        return
+      }
       self.shouldResumeOnForeground = MobileIsRunning()
       if self.shouldResumeOnForeground {
         // Errors here are not actionable — the app is on its way out — but leaving the databases
@@ -199,6 +211,10 @@ public class WacliModule: Module {
     }
 
     OnAppEntersForeground {
+      self.endLoginGrace()
+      // Starting under a login would fail anyway — MobileStart refuses without a stored session,
+      // and the pairing that would create one has not finished.
+      guard !MobileIsLoggingIn() else { return }
       guard self.shouldResumeOnForeground, !MobileIsRunning() else { return }
       self.shouldResumeOnForeground = false
       do {
@@ -213,6 +229,31 @@ public class WacliModule: Module {
         self.sendEvent("onLoginError", ["message": "resume failed: \(error.localizedDescription)"])
       }
     }
+  }
+
+  /**
+   Ask iOS not to suspend us while the user is in WhatsApp typing a pairing code.
+
+   This buys the grace period the system is willing to grant a departing app — around thirty
+   seconds — and no more. There is no entitlement that would extend it, so a user who goes hunting
+   through WhatsApp's menus can still be suspended mid-pairing and has to start again. It is the
+   difference between "usually works if you know where you are going" and "cannot work at all",
+   which is what stopping the service outright made it.
+
+   The expiry handler is not optional: iOS kills the app outright if an assertion is still held when
+   the time runs out.
+   */
+  private func beginLoginGrace() {
+    guard loginGrace == .invalid else { return }
+    loginGrace = UIApplication.shared.beginBackgroundTask(withName: "wacli.login") { [weak self] in
+      self?.endLoginGrace()
+    }
+  }
+
+  private func endLoginGrace() {
+    guard loginGrace != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(loginGrace)
+    loginGrace = .invalid
   }
 
   /**

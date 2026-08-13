@@ -115,6 +115,21 @@ func IsRunning() bool {
 	return service != nil
 }
 
+// IsLoggingIn reports whether a login attempt is in flight: a QR or pairing-code channel is open and
+// waiting for the user to confirm from WhatsApp.
+//
+// This exists because a login is indistinguishable from a live session through IsRunning — beginLogin
+// installs its service the same way Start does — and the two want opposite treatment when the host
+// app leaves the foreground. Pairing by code has to be typed into WhatsApp on the same phone, so
+// backgrounding is a step *inside* the flow rather than the end of it. A host that stops the service
+// there closes the socket the pairing would have completed over, and the attempt cannot recover:
+// the ephemeral key and pairing ref live on that client.
+func IsLoggingIn() bool {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	return loginCancel != nil
+}
+
 // IsConnected reports whether the WhatsApp socket is currently up. It can be false while IsRunning
 // is true — during a reconnect, or when the device has no network.
 func IsConnected() bool {
