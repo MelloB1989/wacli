@@ -330,7 +330,16 @@ export function startVoiceCall(
     options.token,
     options.language ?? '',
     options.voice ?? '',
-  );
+  ).catch((error: unknown) => {
+    // Teardown hangs off `onVoiceEnded`, which fires exactly once — for a call that started. When
+    // the call is refused outright (the daemon is not running, the token is spent) Go never reaches
+    // that callback, so these three would stay subscribed for the life of the app, and the next
+    // call's events would reach this call's handlers as well as its own.
+    stateSub.remove();
+    transcriptSub.remove();
+    endedSub.remove();
+    throw error;
+  });
 }
 
 /** Hang up the call in progress. Safe to call when there is none. */
