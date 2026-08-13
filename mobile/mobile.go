@@ -401,15 +401,58 @@ func CancelLogin() {
 	}
 }
 
-// Logout stops the service and erases the WhatsApp session, so the next launch starts unpaired.
-// The message history in the app database is left intact.
+// Logout unlinks this device from WhatsApp, stops the service and erases the local session, so the
+// next launch starts unpaired. The message history in the app database is left intact.
+//
+// Unlinking first is the part that matters. Deleting the local files only makes *this copy* forget:
+// the device stays listed under WhatsApp's Linked Devices, and any session exported elsewhere — a
+// host that hands the session to a server between calls has one by definition — goes on working.
+// A logout that leaves something else placing calls is not a logout.
+//
+// A failure to reach WhatsApp is returned rather than swallowed, and nothing local is erased in
+// that case. Clearing anyway would leave the user with no way to revoke a device they can no longer
+// see, which is worse than an error they can retry.
 func Logout() error {
 	mu.Lock()
 	defer mu.Unlock()
+	if err := unlinkLocked(); err != nil {
+		return err
+	}
 	if err := stopLocked(); err != nil {
 		return err
 	}
 	wa.ClearSession()
+	return nil
+}
+
+// unlinkLocked tells WhatsApp to revoke this device. It connects if nothing is running, since the
+// common case is a host that keeps the daemon stopped and only starts it around a call.
+func unlinkLocked() error {
+	svc := service
+	if svc == nil {
+		newStore, newService, err := open()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = newService.Close()
+			_ = newStore.Close()
+		}()
+		// Not paired: there is nothing to revoke, and the local clear below is the whole job.
+		if newService.Client().Store.ID == nil {
+			return nil
+		}
+		if err := newService.Connect(); err != nil {
+			return fmt.Errorf("wacli: connect to log out: %w", err)
+		}
+		svc = newService
+	}
+	if svc.Client().Store.ID == nil {
+		return nil
+	}
+	if err := svc.Client().Logout(context.Background()); err != nil {
+		return fmt.Errorf("wacli: unlink from WhatsApp: %w", err)
+	}
 	return nil
 }
 
