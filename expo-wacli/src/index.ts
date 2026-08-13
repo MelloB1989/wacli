@@ -337,3 +337,39 @@ export function startVoiceCall(
 export function endVoiceCall(reason = 'ended by app'): Promise<void> {
   return WacliModule.endVoiceCall(reason);
 }
+
+/**
+ * Hand this device's WhatsApp session to another machine.
+ *
+ * A handover is a move, not a copy. A WhatsApp linked device is not a bearer token — whatsmeow
+ * keeps Signal ratchet state per contact, and two copies that both connect diverge until messages
+ * stop decrypting or the link is dropped, neither recoverable without pairing again.
+ *
+ * This stops the daemon before reading, because exporting a database that is being written produces
+ * a file whose ratchet state is a guess. Returns base64; the caller is expected to hold a lease
+ * around the whole exchange.
+ */
+export function exportSession(): Promise<string> {
+  return WacliModule.exportSession();
+}
+
+/** Replace this device's session with one handed back. The daemon must be stopped. */
+export function importSession(base64: string): Promise<void> {
+  return WacliModule.importSession(base64);
+}
+
+/** Whether this device currently holds a paired session. Answers from disk, so it is safe to ask
+ * after handing the session away. */
+export function hasSession(): Promise<boolean> {
+  return WacliModule.hasSession();
+}
+
+/**
+ * Erase the local session once the other side has acknowledged it.
+ *
+ * Leaving the copy behind is what makes a later accidental reconnect possible, and that reconnect
+ * is the divergence the whole handover exists to avoid.
+ */
+export function releaseSession(): Promise<void> {
+  return WacliModule.releaseSession();
+}

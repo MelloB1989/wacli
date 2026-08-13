@@ -56,6 +56,15 @@ declare class WacliNativeModule extends NativeModule<WacliModuleEvents> {
   ): Promise<void>;
   /** Hang up the call in progress. */
   endVoiceCall(reason: string): Promise<void>;
+
+  /** Stop the daemon and return the session as base64. */
+  exportSession(): Promise<string>;
+  /** Replace this device's session with one handed back. */
+  importSession(base64: string): Promise<void>;
+  /** Whether a paired session exists on disk, without opening the service. */
+  hasSession(): Promise<boolean>;
+  /** Stop the daemon and erase the local session after handing it over. */
+  releaseSession(): Promise<void>;
 }
 
 export default requireNativeModule<WacliNativeModule>('Wacli');
