@@ -1106,6 +1106,14 @@ func handleChatDetail(service *Service, w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	// GET is the read half of this route and was missing: the client and the
+	// whatsapp_get_chat tool have always called it, and got a 405 that reads as
+	// "wrong verb" when the truth was "not implemented". Callers fell back to
+	// listing every chat and filtering client-side.
+	if r.Method == http.MethodGet {
+		handleChatRead(service, w, r, jid)
+		return
+	}
 	if r.Method != http.MethodPut {
 		writeMethodNotAllowed(w)
 		return
@@ -1131,6 +1139,54 @@ func handleChatDetail(service *Service, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chat": chat})
+}
+
+// handleChatRead returns one chat and its recent messages.
+//
+// The ref is resolved the same way every other read resolves one, so a name or a
+// phone number works here exactly as it does on /messages — a route that only
+// accepted an exact JID would send callers to /resolve first for no reason.
+func handleChatRead(service *Service, w http.ResponseWriter, r *http.Request, ref string) {
+	target, err := service.ResolveBestTarget(ref, "chat", false)
+	if err != nil {
+		// An ambiguous name is not a missing chat, and the caller can only
+		// choose if it is handed the candidates. The resolver already carries
+		// them; collapsing that into an error string threw away the one thing
+		// that makes the next call succeed.
+		var ambiguous *AmbiguousReferenceError
+		if errors.As(err, &ambiguous) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"ok":         false,
+				"error":      err.Error(),
+				"candidates": ambiguous.Candidates,
+				"hint":       "retry with one of the candidate JIDs",
+			})
+			return
+		}
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	out := map[string]any{"resolved_chat": target}
+	// A chat known only as a contact has no row here yet. That is not an error:
+	// the caller asked for a chat and gets what is known about it.
+	if chat, err := service.store.GetChat(target.JID); err == nil {
+		out["chat"] = chat
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	messages, err := service.store.SearchMessages(MessageSearchOptions{
+		ChatJID: target.JID,
+		Limit:   queryInt(r, "limit", 50),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out["messages"] = messages
+	writeJSON(w, http.StatusOK, out)
 }
 
 func handleContactDetail(service *Service, w http.ResponseWriter, r *http.Request) {

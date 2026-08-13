@@ -27,6 +27,36 @@ type GroupSummary struct {
 	IsAnnounce   bool               `json:"is_announce"`
 	IsLocked     bool               `json:"is_locked"`
 	Participants []GroupParticipant `json:"participants,omitempty"`
+	// ParticipantCount survives the trim that listing does, so a caller can see
+	// how big a group is without being handed everyone in it.
+	ParticipantCount int `json:"participant_count,omitempty"`
+}
+
+// withoutParticipants is the listing form of a group.
+//
+// Listing every group with every member is 3.8 MB and a million tokens on this
+// account — past the context limit of any model that might read it, for a call
+// whose job is only to find a group by name. The membership is one
+// GroupInfo/whatsapp_group_info call away once the caller knows which group it
+// wants.
+func (g GroupSummary) withoutParticipants() GroupSummary {
+	g.ParticipantCount = len(g.Participants)
+	g.Participants = nil
+	// Topics are freeform and frequently long — a rules-of-the-group essay in a
+	// listing is the same problem in smaller print.
+	g.Topic = truncateTopic(g.Topic)
+	return g
+}
+
+// maxListedTopic bounds a topic in a listing; the full text comes with the group.
+const maxListedTopic = 140
+
+func truncateTopic(topic string) string {
+	runes := []rune(topic)
+	if len(runes) <= maxListedTopic {
+		return topic
+	}
+	return string(runes[:maxListedTopic]) + "…"
 }
 
 // GroupParticipant is one member and what they may do.
@@ -124,7 +154,7 @@ func (s *Service) ListGroups(ctx context.Context) ([]GroupSummary, error) {
 	}
 	out := make([]GroupSummary, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, summarizeGroup(g))
+		out = append(out, summarizeGroup(g).withoutParticipants())
 	}
 	return out, nil
 }
