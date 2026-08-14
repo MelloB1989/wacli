@@ -32,10 +32,17 @@ const (
 	// heard as a delay.
 	defaultPrefillFrames = 3
 
-	// maxQueueFrames caps the playback queue at ~6 s. Past that the relay is producing faster than
-	// the call consumes, which cannot happen in real time and means something is wrong; dropping
-	// the oldest keeps latency bounded instead of growing without limit.
-	maxQueueFrames = 100
+	// maxQueueFrames caps the playback queue at ~45 s of speech.
+	//
+	// It was ~6 s, on the theory that a producer outrunning the call meant
+	// something was wrong. But synthesis is SUPPOSED to outrun the call: a
+	// whole reply arrives in a burst a few seconds long, so any reply with more
+	// than six seconds of audio overflowed the queue and dropping-the-oldest
+	// spliced chunks out of the middle of the sentence — heard as a glitchy
+	// voice on long answers and a clean one on short answers. Latency is not
+	// the queue's job here: barge-in flushes it the moment the caller speaks,
+	// so depth costs nothing when it matters.
+	maxQueueFrames = 750
 
 	// sinkQueueFrames is the uplink buffer, ~3 s. WriteFrame runs on the codec thread and must
 	// never block, so a full queue drops rather than waits.
