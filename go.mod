@@ -136,3 +136,5 @@ require (
 )
 
 tool golang.org/x/mobile/cmd/gobind
+
+replace github.com/purpshell/meowcaller => /home/nikhil/code/meowcaller

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	meowcaller "github.com/purpshell/meowcaller"
+	"github.com/purpshell/meowcaller/diag"
 	"github.com/rs/zerolog"
 )
 
@@ -67,7 +68,19 @@ func (a AudioRequest) nothingToPlay() bool { return a.Say == "" && a.File == "" 
 // newCallMedia wires meowcaller onto an unconnected whatsmeow client.
 func newCallMedia(s *Service, log zerolog.Logger) *callMedia {
 	m := &callMedia{live: map[string]*liveCall{}}
-	m.client = meowcaller.NewClient(s.client, meowcaller.WithLogger(log))
+	opts := []meowcaller.Option{meowcaller.WithLogger(log)}
+	// Packet-level diagnostics, off unless asked for. A call where the audio
+	// only goes one way looks identical in the ordinary logs to one that works,
+	// and the difference is visible only in what arrives on the wire.
+	if dir := strings.TrimSpace(os.Getenv("WACLI_CALL_DIAG_DIR")); dir != "" {
+		if rec, err := diag.NewRecorder(dir); err != nil {
+			s.log.Warnf("call diagnostics unavailable: %v", err)
+		} else {
+			opts = append(opts, meowcaller.WithDiagnostics(rec))
+			s.log.Infof("recording call diagnostics to %s", dir)
+		}
+	}
+	m.client = meowcaller.NewClient(s.client, opts...)
 	m.client.OnIncomingCall(func(call *meowcaller.Call) {
 		m.track(s, call)
 		s.log.Infof("incoming call %s from %s — answer it with: wacli call answer --say '...'",

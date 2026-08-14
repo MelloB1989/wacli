@@ -250,6 +250,75 @@ func (s *Service) placeStreamNow(
 	return *info, nil
 }
 
+// AnswerStreamingCall accepts a ringing incoming call and bridges it to the relay for a live
+// conversation — the answering half of PlaceStreamingCall.
+//
+// Order matters twice here. The relay is dialled BEFORE the call is answered, so the greeting can
+// start the moment the ring stops — answering first would greet the caller with silence while the
+// websocket dials, which on a phone reads as a dead line. And unlike the placing side there is no
+// peer-accept to wait for: we ARE the acceptor, so media starts the instant Answer returns.
+//
+// The inbound direction also sidesteps the flakiest part of placing: the peer placed this call, so
+// their phone is already transmitting — nobody has to be persuaded to start sending.
+func (s *Service) AnswerStreamingCall(ctx context.Context, ref string, opts VoiceStreamOptions) (CallInfo, error) {
+	if s.media == nil {
+		return CallInfo{}, errors.New("media stack is not initialised")
+	}
+	callID := ref
+	if resolved, err := s.calls.resolve(ref); err == nil {
+		callID = resolved
+	}
+	call, err := s.media.get(callID)
+	if err != nil {
+		return CallInfo{}, err
+	}
+	// Refused rather than queued while another call holds the slot: by the time it freed, this
+	// caller would long since have hung up.
+	if !s.queue.acquire() {
+		return CallInfo{}, fmt.Errorf("another call is active (%s) — end it first", s.queue.activeCall())
+	}
+	s.queue.hold(call.ID())
+
+	conn, err := dialRelay(ctx, opts, call.Peer().String())
+	if err != nil {
+		s.queue.finished(s, call.ID())
+		return CallInfo{}, err
+	}
+
+	sessCtx, cancel := context.WithCancel(context.Background())
+	sess := &voiceSession{
+		svc:    s,
+		opts:   opts,
+		conn:   conn,
+		src:    newStreamSource(),
+		sink:   newStreamSink(),
+		callID: call.ID(),
+		cancel: cancel,
+		hangup: call.Hangup,
+	}
+	// Receive before answering, so the caller's opening words are not lost to a late attach.
+	call.Receive(sess.sink)
+	s.media.onEnd(call.ID(), func() { sess.finish("call ended") })
+	go sess.readLoop(sessCtx)
+	go sess.writeLoop(sessCtx)
+
+	if err := call.Answer(); err != nil {
+		sess.finish("answer failed")
+		s.queue.finished(s, call.ID())
+		return CallInfo{}, fmt.Errorf("answer: %w", err)
+	}
+	call.Play(sess.src)
+	sess.setState("connected")
+	sess.playCached("greeting")
+
+	s.log.Infof("answered streaming call %s from %s", call.ID(), call.Peer())
+	if info, ok := s.calls.setState(call.ID(), CallStateAccepted); ok {
+		s.dispatchWebhook("call.accepted", callPayload(*info))
+		return *info, nil
+	}
+	return CallInfo{CallID: call.ID(), State: CallStateAccepted, Direction: CallDirectionIn}, nil
+}
+
 // readLoop consumes relay frames until the connection or the call ends.
 func (v *voiceSession) readLoop(ctx context.Context) {
 	defer v.finish("relay closed")
