@@ -514,33 +514,69 @@ func NewHTTPHandler(service *Service) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"queue": service.CallQueueStatus()})
 	})
 
-	mux.HandleFunc("/calls/stream/answer", func(w http.ResponseWriter, r *http.Request) {
+	// The spoken-call pair drives the LOCAL brain protocol: wacli runs the whole
+	// voice pipeline and only text crosses to brain_url. The relay pair above
+	// (/calls/stream) stays for remote brains — a phone cannot hold a provider
+	// key, so mobile keeps streaming audio to a relay that can.
+	mux.HandleFunc("/calls/spoken", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			To       string `json:"to"`
+			BrainURL string `json:"brain_url"`
+			Language string `json:"language,omitempty"`
+			Voice    string `json:"voice,omitempty"`
+			RingFor  int    `json:"ring_for_seconds,omitempty"`
+			NoFiller bool   `json:"no_filler,omitempty"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if strings.TrimSpace(body.To) == "" {
+			writeError(w, http.StatusBadRequest, errors.New("to is required"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		info, err := service.PlaceSpokenCall(ctx, body.To, VoiceBrainOptions{
+			BrainURL: body.BrainURL,
+			Language: body.Language,
+			Voice:    body.Voice,
+			RingFor:  time.Duration(body.RingFor) * time.Second,
+			NoFiller: body.NoFiller,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "call": info})
+	})
+	mux.HandleFunc("/calls/spoken/answer", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w)
 			return
 		}
 		var body struct {
 			CallID   string `json:"call_id,omitempty"`
-			RelayURL string `json:"relay_url"`
-			Token    string `json:"token"`
+			BrainURL string `json:"brain_url"`
 			Language string `json:"language,omitempty"`
 			Voice    string `json:"voice,omitempty"`
+			NoFiller bool   `json:"no_filler,omitempty"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if strings.TrimSpace(body.RelayURL) == "" || strings.TrimSpace(body.Token) == "" {
-			writeError(w, http.StatusBadRequest, errors.New("relay_url and token are required"))
-			return
-		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		info, err := service.AnswerStreamingCall(ctx, body.CallID, VoiceStreamOptions{
-			RelayURL: body.RelayURL,
-			Token:    body.Token,
+		info, err := service.AnswerSpokenCall(ctx, body.CallID, VoiceBrainOptions{
+			BrainURL: body.BrainURL,
 			Language: body.Language,
 			Voice:    body.Voice,
+			NoFiller: body.NoFiller,
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)

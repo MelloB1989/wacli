@@ -80,7 +80,7 @@ type relayEvent struct {
 }
 
 // voiceSession owns one call's audio plumbing and its relay connection.
-type voiceSession struct {
+type relaySession struct {
 	svc  *Service
 	opts VoiceStreamOptions
 
@@ -199,7 +199,7 @@ func (s *Service) placeStreamNow(
 	s.media.track(s, call)
 
 	sessCtx, cancel := context.WithCancel(context.Background())
-	sess := &voiceSession{
+	sess := &relaySession{
 		svc:    s,
 		opts:   opts,
 		conn:   conn,
@@ -303,7 +303,7 @@ func (s *Service) AnswerStreamingCall(ctx context.Context, ref string, opts Voic
 	}
 
 	sessCtx, cancel := context.WithCancel(context.Background())
-	sess := &voiceSession{
+	sess := &relaySession{
 		svc:    s,
 		opts:   opts,
 		conn:   conn,
@@ -337,7 +337,7 @@ func (s *Service) AnswerStreamingCall(ctx context.Context, ref string, opts Voic
 }
 
 // readLoop consumes relay frames until the connection or the call ends.
-func (v *voiceSession) readLoop(ctx context.Context) {
+func (v *relaySession) readLoop(ctx context.Context) {
 	defer v.finish("relay closed")
 	for {
 		typ, data, err := v.conn.Read(ctx)
@@ -362,7 +362,7 @@ func (v *voiceSession) readLoop(ctx context.Context) {
 }
 
 // handle applies one control event.
-func (v *voiceSession) handle(ev relayEvent) {
+func (v *relaySession) handle(ev relayEvent) {
 	switch ev.Type {
 	case "barge_in":
 		// The peer started talking. Stop mid-word rather than talking over them.
@@ -388,7 +388,7 @@ func (v *voiceSession) handle(ev relayEvent) {
 }
 
 // writeLoop pumps peer audio to the relay.
-func (v *voiceSession) writeLoop(ctx context.Context) {
+func (v *relaySession) writeLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -412,7 +412,7 @@ func (v *voiceSession) writeLoop(ctx context.Context) {
 }
 
 // playCached queues a pre-rendered line, bypassing the network entirely.
-func (v *voiceSession) playCached(id string) {
+func (v *relaySession) playCached(id string) {
 	pcm, ok := v.opts.CachedLines[id]
 	if !ok {
 		return
@@ -425,7 +425,7 @@ func (v *voiceSession) playCached(id string) {
 }
 
 // setState reports a lifecycle change to the host.
-func (v *voiceSession) setState(state string) {
+func (v *relaySession) setState(state string) {
 	if state == "" {
 		return
 	}
@@ -437,7 +437,7 @@ func (v *voiceSession) setState(state string) {
 }
 
 // finish tears the session down exactly once, whichever side ended it first.
-func (v *voiceSession) finish(reason string) {
+func (v *relaySession) finish(reason string) {
 	v.closed.Do(func() {
 		v.cancel()
 		_ = v.src.Close()
