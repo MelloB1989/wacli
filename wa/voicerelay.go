@@ -268,9 +268,26 @@ func (s *Service) AnswerStreamingCall(ctx context.Context, ref string, opts Voic
 	if resolved, err := s.calls.resolve(ref); err == nil {
 		callID = resolved
 	}
-	call, err := s.media.get(callID)
-	if err != nil {
-		return CallInfo{}, err
+	// The offer fans out to two handlers: wacli's, which announces the call over the webhook, and
+	// meowcaller's, which decrypts the key and prepares media before registering it as live. A
+	// consumer that answers the moment the webhook lands — the point of the webhook — arrives here
+	// in about a millisecond and loses that race. The ring lasts seconds; waiting a few hundred
+	// milliseconds for the registration is invisible, failing was not.
+	var call *meowcaller.Call
+	var err error
+	for waited := time.Duration(0); ; waited += 100 * time.Millisecond {
+		call, err = s.media.get(callID)
+		if err == nil {
+			break
+		}
+		if waited >= 3*time.Second {
+			return CallInfo{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return CallInfo{}, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	// Refused rather than queued while another call holds the slot: by the time it freed, this
 	// caller would long since have hung up.
