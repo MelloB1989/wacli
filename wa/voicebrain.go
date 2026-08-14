@@ -48,7 +48,7 @@ const (
 	// every breath, so one sentence arrives as several finals; answering each
 	// fragment talks over somebody mid-thought. Every millisecond here is
 	// silence the caller hears, so it buys only enough to join a breath.
-	settleFor = 280 * time.Millisecond
+	settleFor = 200 * time.Millisecond
 )
 
 // fillers are spoken the moment an utterance goes to the brain, so the caller
