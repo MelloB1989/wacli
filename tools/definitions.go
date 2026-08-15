@@ -224,9 +224,11 @@ func (t *Tools) ChatTools() []ai.GoFunctionTool {
 func (t *Tools) CallTools() []ai.GoFunctionTool {
 	return []ai.GoFunctionTool{
 		tool("whatsapp_place_call",
-			"Place a real WhatsApp voice call. It can speak text aloud when the person answers, play an "+
-				"audio file, and record what the other party says. Only one call runs at a time; further "+
-				"calls queue automatically.",
+			"Place a ONE-WAY WhatsApp voice call: it rings, then speaks 'say' aloud, plays 'audio', "+
+				"and/or records the other party. It does NOT hold a conversation and cannot hear or answer "+
+				"the person — for a live two-way talk use the caller's conversational call tool instead. "+
+				"With neither 'say' nor 'audio' the callee answers to SILENCE, so pass one of them. "+
+				"Only one call runs at a time; further calls queue automatically.",
 			object(map[string]any{
 				"to":     str("Who to call: phone number, JID, or contact name."),
 				"say":    str("Text to speak once they answer."),
