@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -103,6 +104,10 @@ type voiceSession struct {
 	// stale ones.
 	turns  chan string
 	filled int
+	// micFrames and sttEvents count only far enough to log the first of each.
+	micFrames int
+	sttEvents int
+	dump      *os.File
 
 	cancel context.CancelFunc
 	hangup func() error
@@ -159,6 +164,12 @@ func (s *Service) startVoiceSession(ctx context.Context, opts VoiceBrainOptions,
 		callID: callID, peer: peer, peerName: peerName,
 		turns: make(chan string, 1), cancel: cancel,
 	}
+	if path := strings.TrimSpace(os.Getenv("WACLI_VOICE_DUMP")); path != "" {
+		if f, err := os.Create(path); err == nil {
+			v.dump = f
+			s.log.Infof("dumping transcription audio to %s (raw s16le 16kHz mono)", path)
+		}
+	}
 	go v.pumpMic(sessCtx)
 	go v.pumpSpeech(sessCtx)
 	go v.pumpVoice(sessCtx)
@@ -185,6 +196,27 @@ func (v *voiceSession) pumpMic(ctx context.Context) {
 		case frame, ok := <-v.sink.Frames():
 			if !ok {
 				return
+			}
+			// One line, once. "No reply" has three possible meanings — the call
+			// carried no audio, the audio never reached transcription, or
+			// transcription returned nothing — and from the outside they look
+			// identical. This separates the first two from the third.
+			if v.micFrames++; v.micFrames == 1 {
+				v.svc.log.Infof("call %s: first audio frame reached transcription (%d bytes)", v.callID, len(frame))
+			}
+			// WACLI_VOICE_DUMP writes exactly what transcription is fed, so the
+			// audio can be listened to and measured instead of reasoned about.
+			// Sarvam transcribes a synthetic sample perfectly and this stream not
+			// at all, which means the bytes differ from what they should be —
+			// wrong rate, wrong scale or silence — and only the bytes can say.
+			if v.dump != nil {
+				_, _ = v.dump.Write(frame)
+			}
+			// Every ~30s, not every ~3s: enough to tell a silent line from a
+			// working one in a log after the fact, quiet enough to live with.
+			if v.micFrames%500 == 0 {
+				v.svc.log.Infof("call %s: %d frames to transcription, level %.4f",
+					v.callID, v.micFrames, pcmLevel(frame))
 			}
 			if err := v.stt.Send(ctx, frame); err != nil {
 				if ctx.Err() == nil {
@@ -215,6 +247,9 @@ func (v *voiceSession) pumpSpeech(ctx context.Context) {
 		mu.Unlock()
 	}()
 	for ev := range v.stt.Events() {
+		if v.sttEvents++; v.sttEvents == 1 {
+			v.svc.log.Infof("call %s: transcription is responding (first event kind %v)", v.callID, ev.Kind)
+		}
 		switch ev.Kind {
 		case sarvam.SpeechStart:
 			// Stop mid-word rather than talking over them.
@@ -517,3 +552,23 @@ func (s *Service) AnswerSpokenCall(ctx context.Context, ref string, opts VoiceBr
 // sarvamAPIKey is read at call time rather than held, so a key added after the
 // daemon started is picked up by the next call.
 func sarvamAPIKey() string { return strings.TrimSpace(os.Getenv("SARVAM_API_KEY")) }
+
+// pcmLevel is the RMS of a 16-bit little-endian PCM buffer, normalised to 0..1.
+// Near-zero means the caller's audio never really arrived, whatever the frame
+// counts say.
+func pcmLevel(pcm []byte) float64 {
+	if len(pcm) < 2 {
+		return 0
+	}
+	var sum float64
+	n := 0
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := float64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
+		sum += v * v
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return math.Sqrt(sum/float64(n)) / 32768
+}
