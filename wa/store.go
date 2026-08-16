@@ -1641,3 +1641,49 @@ func (s *Store) GetWebhook(id int64) (WebhookRecord, error) {
 	}
 	return WebhookRecord{}, fmt.Errorf("no webhook %d", id)
 }
+
+// RecentlySentSameText reports whether this chat has already received the same
+// message within the window, and how long ago.
+//
+// Comparison is on collapsed, case-folded text, so a caller that re-composes
+// the same thought with different spacing or capitalisation still counts as a
+// repeat.
+func (s *Store) RecentlySentSameText(chatJID, text string, within time.Duration) (bool, time.Duration) {
+	key := normalizeSendText(text)
+	if key == "" {
+		return false, 0
+	}
+	cutoff := time.Now().Add(-within).Unix()
+	rows, err := s.db.Query(`
+		SELECT timestamp, content FROM messages
+		WHERE chat_jid = ? AND is_from_me = 1 AND timestamp >= ? AND deleted = 0
+		ORDER BY timestamp DESC LIMIT 40`, chatJID, cutoff)
+	if err != nil {
+		return false, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ts int64
+		var content string
+		if rows.Scan(&ts, &content) != nil {
+			continue
+		}
+		if normalizeSendText(content) == key {
+			// Clamped: a stored timestamp can sit a few seconds ahead of the
+			// local clock (it is the server's), and "sent -16s ago" reads as a
+			// bug in the guard rather than a message sent a moment ago.
+			age := time.Since(time.Unix(ts, 0))
+			if age < 0 {
+				age = 0
+			}
+			return true, age
+		}
+	}
+	return false, 0
+}
+
+// normalizeSendText reduces a message to what makes two of them "the same
+// message" for the purpose of not sending it twice.
+func normalizeSendText(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}

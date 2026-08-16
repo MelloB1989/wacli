@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MelloB1989/wacli/wa/sarvam"
@@ -31,13 +32,19 @@ import (
 // The wire between them is three message types each way, all JSON text:
 //
 //	wacli → brain:  {"type":"start", "call_id","peer","peer_name","language","direction"}
-//	                {"type":"utterance", "text"}
+//	                {"type":"utterance", "id", "text", "interrupted"}
 //	                {"type":"ended", "reason"}
-//	brain → wacli:  {"type":"say", "text"}     — speak this to the caller
-//	                {"type":"hangup"}          — end the call
+//	brain → wacli:  {"type":"say", "text", "for"}   — speak this to the caller
+//	                {"type":"hangup"}               — end the call, once said
 //
-// The greeting is simply the first say after start. Anything a future brain
-// needs beyond this earns its way in as a new message type, not a new socket.
+// The greeting is simply the first say after start. "id" numbers utterances
+// and "for" names the one a say answers, so a reply to something the caller
+// has already moved past can be recognised and dropped instead of spoken.
+// "interrupted" tells the brain its previous reply was cut off or never
+// heard, so it can pick up rather than assume it landed. A say with no "for"
+// is the brain speaking on its own — a task finishing mid-call — and is
+// always welcome. Anything a future brain needs beyond this earns its way in
+// as a new field, not a new socket.
 
 const (
 	brainHandshakeTimeout = 10 * time.Second
@@ -50,6 +57,24 @@ const (
 	// fragment talks over somebody mid-thought. Every millisecond here is
 	// silence the caller hears, so it buys only enough to join a breath.
 	settleFor = 200 * time.Millisecond
+
+	// bargeConfirm is how long a sound from the caller has to last before it
+	// counts as an interruption. Playback PAUSES the instant the detector
+	// fires — a caller who starts talking hears KARMAX stop at once — but the
+	// queued speech is only DISCARDED once the sound has lasted this long. A
+	// cough, a laugh, a chair scraping: the detector fires, nothing follows,
+	// and playback resumes from the same frame with nothing lost. Real
+	// interruptions ("wait", "no", "hang on") are longer than this.
+	bargeConfirm = 250 * time.Millisecond
+
+	// hangupDrain bounds how long a hangup waits for the goodbye to finish
+	// playing. Cutting "bye" in half is worse than a second's delay.
+	hangupDrain = 8 * time.Second
+
+	// holdForCaller bounds how long a reply waits for the caller to stop
+	// talking before it is spoken anyway. Not speaking over somebody is the
+	// rule; a caller who never pauses gets answered regardless.
+	holdForCaller = 4 * time.Second
 )
 
 // fillers are spoken the moment an utterance goes to the brain, so the caller
@@ -81,6 +106,12 @@ type brainMsg struct {
 	Direction string `json:"direction,omitempty"`
 	Text      string `json:"text,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+	// ID numbers an utterance; For names the utterance a say answers.
+	ID  int64 `json:"id,omitempty"`
+	For int64 `json:"for,omitempty"`
+	// Interrupted marks an utterance spoken before the previous reply was
+	// heard in full.
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 // voiceSession owns one call's pipeline: media frames, speech both ways, turn
@@ -108,6 +139,36 @@ type voiceSession struct {
 	micFrames int
 	sttEvents int
 	dump      *os.File
+
+	// Turn-taking state, all safe across the pumps.
+	//
+	// utterSeq numbers utterances; latest is the newest one sent to the brain,
+	// which is the only one a say may still answer. talking is the detector's
+	// view of the caller. cutReply records that the last reply was interrupted
+	// or dropped unheard, and rides out on the next utterance. discard drops
+	// synthesis output that belongs to a reply the caller cut off — the
+	// synthesiser keeps producing after a barge-in, and without this the
+	// interrupted sentence came back a second later as if nothing happened.
+	utterSeq atomic.Int64
+	latest   atomic.Int64
+	talking  atomic.Bool
+	cutReply atomic.Bool
+	discard  atomic.Bool
+	// bargeMu guards the pause-then-confirm timer.
+	bargeMu    sync.Mutex
+	bargeTimer *time.Timer
+	// ttsMu guards tts, which is replaced after a confirmed barge-in so
+	// nothing of the interrupted reply survives on the wire.
+	ttsMu sync.RWMutex
+	// lastSay is when text was last handed to synthesis and lastAudio when
+	// its audio last arrived; together they say whether we are mid-reply,
+	// since the synthesiser reports no completion of its own. replyPlaying
+	// tells a cut reply from a cut filler: interrupting "mm-hm" is not
+	// interrupting an answer, and must not be reported to the brain as one.
+	sayMu        sync.Mutex
+	lastSay      time.Time
+	lastAudio    time.Time
+	replyPlaying bool
 
 	cancel context.CancelFunc
 	hangup func() error
@@ -228,13 +289,8 @@ func (v *voiceSession) pumpMic(ctx context.Context) {
 	}
 }
 
-// pumpSpeech turns transcription into settled utterances.
-//
-// The FINAL TRANSCRIPT is the utterance boundary, not the VAD's end-of-speech:
-// the words arrive ~100–200ms after the end-of-speech signal, and flushing on
-// the signal answered everything one utterance late. Barge-in fires on
-// speech START — the point is to stop talking over them, and waiting for words
-// would talk over them for the length of a phrase.
+// pumpSpeech turns transcripts into utterances and detector events into
+// barge-in.
 func (v *voiceSession) pumpSpeech(ctx context.Context) {
 	var pending strings.Builder
 	var mu sync.Mutex
@@ -252,8 +308,12 @@ func (v *voiceSession) pumpSpeech(ctx context.Context) {
 		}
 		switch ev.Kind {
 		case sarvam.SpeechStart:
-			// Stop mid-word rather than talking over them.
-			v.src.Flush()
+			v.talking.Store(true)
+			v.onCallerSound()
+
+		case sarvam.SpeechEnd:
+			v.talking.Store(false)
+			v.onCallerQuiet()
 
 		case sarvam.Transcript:
 			if !ev.Final || strings.TrimSpace(ev.Text) == "" {
@@ -276,11 +336,163 @@ func (v *voiceSession) pumpSpeech(ctx context.Context) {
 				v.offer(utterance)
 			})
 			mu.Unlock()
-
-		case sarvam.SpeechEnd:
-			// VAD only; the words for this utterance are still in flight.
 		}
 	}
+}
+
+// onCallerSound is the detector reporting the caller began making a sound.
+//
+// If nothing is playing there is nothing to interrupt. Otherwise playback
+// pauses immediately and a timer decides what the sound was: still going at
+// bargeConfirm and it is speech, so the reply is discarded; over before then
+// and it was a noise, so the reply resumes where it stopped.
+func (v *voiceSession) onCallerSound() {
+	if !v.speakingNow() {
+		return
+	}
+	v.src.Pause()
+	v.bargeMu.Lock()
+	defer v.bargeMu.Unlock()
+	if v.bargeTimer != nil {
+		v.bargeTimer.Stop()
+	}
+	v.bargeTimer = time.AfterFunc(bargeConfirm, func() {
+		// Still talking, and we were still mid-sentence: an interruption.
+		// Anything else — the sound stopped, or the reply finished on its
+		// own during the wait — and playback just carries on.
+		if !v.talking.Load() || !v.speakingNow() {
+			v.src.Resume()
+			return
+		}
+		v.interrupt()
+	})
+}
+
+// onCallerQuiet is the detector reporting the sound stopped. If it stopped
+// before the confirm timer fired, it was not an interruption.
+func (v *voiceSession) onCallerQuiet() {
+	v.bargeMu.Lock()
+	timer := v.bargeTimer
+	v.bargeTimer = nil
+	v.bargeMu.Unlock()
+	if timer != nil && timer.Stop() {
+		v.src.Resume()
+	}
+}
+
+// interrupt is a confirmed barge-in: the caller is talking over a reply.
+//
+// The queue is flushed and synthesis output is discarded until the next thing
+// we deliberately say — the synthesiser is still producing the rest of the
+// reply, and letting that through played the interrupted sentence back a
+// second later. Then the synthesis socket is replaced outright, so nothing of
+// the old reply can arrive on it at all: a discard flag alone leaves a window
+// where the tail of the old reply and the head of the new one share a stream.
+func (v *voiceSession) interrupt() {
+	played, _, _ := v.src.Stats()
+	v.src.Flush()
+	v.discard.Store(true)
+	// Only a cut REPLY is reported to the brain. A cut filler is nothing —
+	// the caller kept talking through "mm-hm", which is what fillers are for.
+	if v.isReplyPlaying() {
+		v.cutReply.Store(true)
+	}
+	v.svc.log.Infof("call %s: caller interrupted after %d frames; dropping the rest", v.callID, played)
+	go v.replaceTTS()
+}
+
+// speakingNow reports whether KARMAX is in the middle of saying something:
+// audio queued, audio still arriving, or text handed to synthesis whose first
+// audio has not come back yet. The queue alone is not enough — it is
+// momentarily empty between chunks of a reply that is very much still being
+// spoken.
+func (v *voiceSession) speakingNow() bool {
+	if v.src.Depth() > 0 {
+		return true
+	}
+	v.sayMu.Lock()
+	defer v.sayMu.Unlock()
+	if time.Since(v.lastAudio) < 400*time.Millisecond {
+		return true
+	}
+	return time.Since(v.lastSay) < 2*time.Second && v.lastAudio.Before(v.lastSay)
+}
+
+// synthesising is speakingNow with the queue left out — used where the queue
+// has already been checked.
+func (v *voiceSession) synthesising() bool {
+	v.sayMu.Lock()
+	defer v.sayMu.Unlock()
+	if time.Since(v.lastAudio) < 400*time.Millisecond {
+		return true
+	}
+	return time.Since(v.lastSay) < 2*time.Second && v.lastAudio.Before(v.lastSay)
+}
+
+func (v *voiceSession) markSay(reply bool) {
+	v.sayMu.Lock()
+	defer v.sayMu.Unlock()
+	v.lastSay = time.Now()
+	v.replyPlaying = reply
+}
+
+func (v *voiceSession) markAudio() {
+	v.sayMu.Lock()
+	defer v.sayMu.Unlock()
+	v.lastAudio = time.Now()
+}
+
+func (v *voiceSession) isReplyPlaying() bool {
+	v.sayMu.Lock()
+	defer v.sayMu.Unlock()
+	return v.replyPlaying
+}
+
+// replaceTTS swaps in a fresh synthesis socket. Anything still arriving on the
+// old one belonged to a reply the caller cut off.
+func (v *voiceSession) replaceTTS() {
+	language := strings.TrimSpace(v.opts.Language)
+	if language == "" {
+		language = "en-IN"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), brainHandshakeTimeout)
+	defer cancel()
+	fresh, err := sarvam.DialTTS(ctx, sarvam.Config{APIKey: sarvamAPIKey()}, language, strings.TrimSpace(v.opts.Voice), 0)
+	if err != nil {
+		// The old socket stays; the discard flag still protects the caller
+		// from the interrupted reply, just less airtightly.
+		v.svc.log.Warnf("call %s: could not replace the synthesiser after an interruption: %v", v.callID, err)
+		return
+	}
+	v.ttsMu.Lock()
+	old := v.tts
+	v.tts = fresh
+	v.ttsMu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+}
+
+func (v *voiceSession) currentTTS() *sarvam.TTS {
+	v.ttsMu.RLock()
+	defer v.ttsMu.RUnlock()
+	return v.tts
+}
+
+// speak is the one way anything is said. It ends any discard in force —
+// this is deliberately new speech — and flushes so it is synthesised now
+// rather than fused into whatever comes next.
+func (v *voiceSession) speak(ctx context.Context, text string, reply bool) error {
+	v.discard.Store(false)
+	v.markSay(reply)
+	t := v.currentTTS()
+	if t == nil {
+		return errors.New("no synthesiser")
+	}
+	if err := t.Speak(ctx, text); err != nil {
+		return err
+	}
+	return t.Flush(ctx)
 }
 
 // offer hands the newest utterance to the turn runner, displacing any older one
@@ -309,28 +521,54 @@ func (v *voiceSession) runTurns(ctx context.Context) {
 			if !ok {
 				return
 			}
+			id := v.utterSeq.Add(1)
+			v.latest.Store(id)
+			interrupted := v.cutReply.Swap(false)
 			v.svc.log.Infof("call %s: heard %q", v.callID, utterance)
 			if !v.opts.NoFiller {
 				v.filled++
-				// Flushed immediately: Speak only queues, synthesis happens on
-				// Flush, and an unflushed filler fuses into the next reply.
-				_ = v.tts.Speak(ctx, voiceFillers[v.filled%len(voiceFillers)])
-				_ = v.tts.Flush(ctx)
+				_ = v.speak(ctx, voiceFillers[v.filled%len(voiceFillers)], false)
 			}
-			v.send(brainMsg{Type: "utterance", Text: utterance})
+			v.send(brainMsg{Type: "utterance", ID: id, Text: utterance, Interrupted: interrupted})
 		}
 	}
 }
 
 // pumpVoice moves synthesised speech onto the call.
+//
+// Push, not PushFrames: synthesis chunks are not frame-aligned — measured, not
+// one in a hundred was — and PushFrames dropped each chunk's tail. The most
+// common chunk was one frame plus forty milliseconds, so two fifths of every
+// reply was simply missing, heard as a voice that never quite came through.
+// Push carries the remainder into the next chunk and loses nothing.
+//
+// The synthesiser can be replaced mid-call (see interrupt), so this follows
+// whichever socket is current rather than the one it started with.
 func (v *voiceSession) pumpVoice(ctx context.Context) {
-	for chunk := range v.tts.Audio() {
-		frames := make([][]float32, 0, len(chunk)/frameBytes+1)
-		for off := 0; off+frameBytes <= len(chunk); off += frameBytes {
-			frames = append(frames, pcmToFloat(chunk[off:off+frameBytes]))
+	for {
+		t := v.currentTTS()
+		if t == nil {
+			return
 		}
-		v.src.PushFrames(frames)
-		_ = ctx
+		for chunk := range t.Audio() {
+			if v.discard.Load() {
+				continue
+			}
+			v.markAudio()
+			v.src.Push(chunk)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		// The channel closed. If the socket was replaced there is a new one
+		// to follow; if it simply died, dial another rather than go mute for
+		// the rest of the call.
+		if v.currentTTS() == t {
+			v.replaceTTS()
+			if v.currentTTS() == t {
+				return
+			}
+		}
 	}
 }
 
@@ -352,17 +590,80 @@ func (v *voiceSession) pumpBrain(ctx context.Context) {
 			if strings.TrimSpace(m.Text) == "" {
 				continue
 			}
-			v.svc.log.Infof("call %s: saying %q", v.callID, m.Text)
-			if err := v.tts.Speak(ctx, m.Text); err != nil && ctx.Err() == nil {
-				v.svc.log.Warnf("call %s: could not speak: %v", v.callID, err)
+			// A reply to an utterance the caller has already talked past is
+			// dropped, and the brain is told on the next turn that it went
+			// unheard. Replies with no "for" are the brain speaking of its
+			// own accord and are always delivered.
+			if m.For != 0 && m.For != v.latest.Load() {
+				v.svc.log.Infof("call %s: dropped a stale reply to utterance %d (caller is on %d)", v.callID, m.For, v.latest.Load())
+				v.cutReply.Store(true)
 				continue
 			}
-			_ = v.tts.Flush(ctx)
+			v.waitForCallerPause(ctx)
+			v.svc.log.Infof("call %s: saying %q", v.callID, m.Text)
+			if err := v.speak(ctx, m.Text, true); err != nil && ctx.Err() == nil {
+				v.svc.log.Warnf("call %s: could not speak: %v", v.callID, err)
+			}
 		case "hangup":
-			v.finish("brain hung up")
+			v.drainThenFinish("brain hung up")
 			return
 		}
 	}
+}
+
+// waitForCallerPause holds a reply while the caller is mid-sentence. Speaking
+// the moment a reply is ready, over the top of somebody, is the one thing every
+// caller notices; waiting a beat for them to finish is what a person does.
+func (v *voiceSession) waitForCallerPause(ctx context.Context) {
+	if !v.talking.Load() {
+		return
+	}
+	deadline := time.After(holdForCaller)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			return
+		case <-tick.C:
+			if !v.talking.Load() {
+				// A breath's worth of gap so the reply lands after their
+				// last word rather than on top of it.
+				time.Sleep(150 * time.Millisecond)
+				return
+			}
+		}
+	}
+}
+
+// drainThenFinish lets whatever is being said finish before the line drops.
+// The brain hangs up right after its goodbye; hanging up the moment the
+// message arrives cut the goodbye in half every time.
+func (v *voiceSession) drainThenFinish(reason string) {
+	deadline := time.Now().Add(hangupDrain)
+	// Synthesis needs a moment to deliver the goodbye before the queue means
+	// anything: an empty queue at t=0 reads as "nothing left to say".
+	time.Sleep(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if v.src.Depth() > 0 {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if !v.synthesising() {
+			break
+		}
+		// Recently speaking, nothing queued: between chunks, or done. Give it
+		// one more beat before deciding it is done.
+		time.Sleep(250 * time.Millisecond)
+		if v.src.Depth() == 0 {
+			break
+		}
+	}
+	// One more frame so the last queued frame actually plays out.
+	time.Sleep(120 * time.Millisecond)
+	v.finish(reason)
 }
 
 // send writes one message to the brain, serialised across goroutines.
@@ -386,13 +687,22 @@ func (v *voiceSession) finish(reason string) {
 		_ = v.src.Close()
 		_ = v.sink.Close()
 		_ = v.stt.Close()
-		_ = v.tts.Close()
+		if t := v.currentTTS(); t != nil {
+			_ = t.Close()
+		}
 		_ = v.conn.Close(websocket.StatusNormalClosure, "call ended")
 		if v.hangup != nil {
 			_ = v.hangup()
 		}
+		if v.dump != nil {
+			_ = v.dump.Close()
+		}
+		played, underruns, dropped := v.src.Stats()
 		v.svc.notifyObserver("call_ended", map[string]any{"call_id": v.callID, "reason": reason})
-		v.svc.log.Infof("spoken call %s finished: %s", v.callID, reason)
+		// The numbers a caller's experience is made of, in the one line
+		// anybody reads after a call: underruns are stutters, drops are skips.
+		v.svc.log.Infof("spoken call %s finished: %s (played %d frames, %d underruns, %d dropped)",
+			v.callID, reason, played, underruns, dropped)
 		// Last, and here rather than at each call site: this is the one place
 		// every spoken call passes through on its way out. The plain call path
 		// released the slot from its media-end callback and the spoken path

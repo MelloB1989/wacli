@@ -1394,7 +1394,48 @@ func (s *Service) SendMessageReplying(ctx context.Context, recipient, text, medi
 	if err := s.ensureAutomationAllowed(jid); err != nil {
 		return MessageRecord{}, err
 	}
+	if err := s.refuseRepeat(jid.String(), text, mediaPath); err != nil {
+		return MessageRecord{}, err
+	}
 	return s.sendMessageDirect(ctx, jid, text, mediaPath, true, replyToID)
+}
+
+// ErrRepeatSuppressed is returned instead of sending the same thing twice.
+var ErrRepeatSuppressed = errors.New("already sent that to this chat just now")
+
+const (
+	// repeatWindow is how long a message counts as already said.
+	//
+	// The guard lives HERE because this is the only place every sender meets.
+	// Above wacli there are three independent exits — the agent's comms.send,
+	// a workflow's send tool, and a coding harness shelling out to the CLI —
+	// each with its own idea of what was already said, and none of them
+	// sharing a record. The observed result was one chat receiving "done,
+	// reminder set for Kartik — setup Linux on Shiva's PC" three times inside
+	// fourteen minutes, character for character, because three different
+	// callers each believed they were the one answering. A duplicate check in
+	// any one of them cannot see the other two; a check here sees all of them.
+	repeatWindow = 12 * time.Minute
+	// repeatMinChars keeps short conversational replies free to repeat. "ok",
+	// "yes", "👍" recur constantly and legitimately; a considered sentence
+	// arriving twice in twelve minutes does not.
+	repeatMinChars = 25
+)
+
+func (s *Service) refuseRepeat(chatJID, text, mediaPath string) error {
+	// Media is exempt: two sends of the same caption with different files are
+	// two different messages, and the file is what carries the meaning.
+	if mediaPath != "" || len([]rune(strings.TrimSpace(text))) < repeatMinChars {
+		return nil
+	}
+	same, ago := s.store.RecentlySentSameText(chatJID, text, repeatWindow)
+	if !same {
+		return nil
+	}
+	// Logged, not silent: a suppressed duplicate means something upstream
+	// tried to answer twice, and that is worth being able to find.
+	s.log.Warnf("suppressed a repeat to %s (identical message %s ago): %.60s", chatJID, ago.Round(time.Second), text)
+	return fmt.Errorf("%w (%s ago) — if this is deliberate, vary the wording or wait", ErrRepeatSuppressed, ago.Round(time.Second))
 }
 
 func (s *Service) sendMessageDirect(ctx context.Context, jid types.JID, text, mediaPath string, emitWebhook bool, replyToID string) (MessageRecord, error) {

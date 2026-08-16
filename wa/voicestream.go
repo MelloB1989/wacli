@@ -63,9 +63,17 @@ type streamSource struct {
 	closed  bool
 
 	silence []float32
+	// paused holds playback without discarding it: frames stay queued and
+	// ReadFrame returns silence. This is the first half of a barge-in — the
+	// caller has started making a sound and playback stops at once, but what
+	// was about to be said survives until the sound proves to be speech.
+	paused bool
 
 	underruns atomic.Int64
 	dropped   atomic.Int64
+	// played counts frames actually delivered to the codec, so a session can
+	// tell how much of a reply the caller heard before cutting it off.
+	played atomic.Int64
 }
 
 func newStreamSource() *streamSource {
@@ -83,6 +91,9 @@ func (s *streamSource) ReadFrame() ([]float32, error) {
 	if s.closed && len(s.queue) == 0 {
 		return nil, io.EOF
 	}
+	if s.paused {
+		return s.silence, nil
+	}
 	// Hold silence until enough has arrived to play through the next gap.
 	if !s.primed {
 		if len(s.queue) < s.prefill {
@@ -99,7 +110,27 @@ func (s *streamSource) ReadFrame() ([]float32, error) {
 	frame := s.queue[0]
 	s.queue[0] = nil
 	s.queue = s.queue[1:]
+	s.played.Add(1)
 	return frame, nil
+}
+
+// Pause holds playback in place; Resume lets it continue from the same frame.
+func (s *streamSource) Pause() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paused = true
+}
+
+func (s *streamSource) Resume() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paused = false
+}
+
+// Stats reports what the caller experienced: frames played, underruns (heard
+// as stutters), and frames dropped from an overfull queue (heard as skips).
+func (s *streamSource) Stats() (played, underruns, dropped int64) {
+	return s.played.Load(), s.underruns.Load(), s.dropped.Load()
 }
 
 // Push queues s16le PCM of any length, buffering whatever does not fill a frame.
@@ -157,6 +188,7 @@ func (s *streamSource) Flush() {
 	s.queue = s.queue[:0]
 	s.carry = nil
 	s.primed = false
+	s.paused = false
 }
 
 // Depth reports queued frames, for pacing decisions and diagnostics.
