@@ -433,6 +433,10 @@ func (s *Service) startRingTimeout(callID string, ringFor time.Duration) {
 		if _, err := s.EndCall(context.Background(), callID, callReasonTimeout); err != nil &&
 			!errors.Is(err, errCallNotActive) {
 			s.log.Warnf("ring timeout for call %s: %v", callID, err)
+			// A ring-out whose EndCall failed still has to give the slot back.
+			// Without this the queue stayed held by a call that never even
+			// connected, and nothing could dial again until a restart.
+			s.queue.finished(s, callID)
 		}
 	}()
 }

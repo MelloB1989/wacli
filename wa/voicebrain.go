@@ -358,6 +358,15 @@ func (v *voiceSession) finish(reason string) {
 		}
 		v.svc.notifyObserver("call_ended", map[string]any{"call_id": v.callID, "reason": reason})
 		v.svc.log.Infof("spoken call %s finished: %s", v.callID, reason)
+		// Last, and here rather than at each call site: this is the one place
+		// every spoken call passes through on its way out. The plain call path
+		// released the slot from its media-end callback and the spoken path
+		// never did, so a single spoken call held the queue for the life of the
+		// process and every call after it — including answering an incoming one
+		// — was refused with "another call is already in progress".
+		// releaseAndDrain may start the next queued call, so it goes after the
+		// teardown above rather than before it.
+		v.svc.queue.finished(v.svc, v.callID)
 	})
 }
 
