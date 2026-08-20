@@ -49,6 +49,9 @@ type Service struct {
 	lastEventAt  time.Time
 	watchdogOnce sync.Once
 
+	// pairing is the link attempt in progress, or nil. See pairing.go.
+	pairing *pairingState
+
 	// calls tracks in-flight and recently finished calls. See calls.go.
 	calls *callRegistry
 	// capture records raw call signaling stanzas when enabled. See callcapture.go.

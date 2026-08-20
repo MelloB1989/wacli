@@ -31,6 +31,70 @@ func NewHTTPHandler(service *Service) http.Handler {
 		writeJSON(w, http.StatusOK, status)
 	})
 
+	// Linking this device. Reachable while unpaired — which is the only time it is any use, and
+	// the reason the daemon serves before it connects.
+	mux.HandleFunc("/login/pair", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		var body struct {
+			Phone string `json:"phone"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		session, err := service.StartPairing(r.Context(), body.Phone)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrAlreadyPaired):
+				writeError(w, http.StatusConflict, err)
+			case errors.Is(err, ErrPairingInProgress):
+				writeError(w, http.StatusConflict, err)
+			default:
+				writeError(w, http.StatusBadGateway, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"code": session.Code,
+			"instructions": "On the phone: WhatsApp -> Settings -> Linked Devices -> " +
+				"Link with phone number, then enter this code.",
+			"expires_in_seconds": int(pairWindow / time.Second),
+		})
+	})
+
+	mux.HandleFunc("/login/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+		code := service.PairingCode()
+		state := "unlinked"
+		switch {
+		case service.IsPaired():
+			state = "linked"
+		case code != "":
+			state = "pairing"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"state":     state,
+			"paired":    service.IsPaired(),
+			"code":      code,
+			"connected": service.IsConnected(),
+		})
+	})
+
+	mux.HandleFunc("/login/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		service.CancelPairing()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
-	"go.mau.fi/whatsmeow"
 )
 
 // version is set at build time via -ldflags "-X main.version=<tag>".
@@ -121,6 +120,32 @@ func cmdLogin(args []string) {
 		defer service.Close()
 	}
 
+	// Pairing by code goes through the same call the daemon's /login/pair route uses. Two
+	// implementations of a sequence this order-dependent is two chances to get it wrong, and only
+	// one of them would be the one anybody runs by hand.
+	if *usePairCode {
+		phone := os.Getenv("WACLI_PHONE")
+		if wa.NormalizePhone(phone) == "" {
+			die("WACLI_PHONE env var is required for pairing-code login")
+		}
+		session, err := service.StartPairing(context.Background(), phone)
+		if err != nil {
+			die("%v", err)
+		}
+		fmt.Printf("Pairing code: %s\n", session.Code)
+		fmt.Println("Open WhatsApp on your phone -> Linked Devices -> Link with phone number.")
+		if err := <-session.Done; err != nil {
+			die("%v", err)
+		}
+		fmt.Println("Login successful.")
+		postLoginSync(service)
+		if !*skipAccessConfig {
+			maybeConfigureAccess(store)
+		}
+		fmt.Printf("Start the daemon with: wacli daemon\n")
+		return
+	}
+
 	qrChan, err := service.Client().GetQRChannel(context.Background())
 	if err != nil {
 		die("open QR channel: %v", err)
@@ -129,27 +154,9 @@ func cmdLogin(args []string) {
 		die("connect: %v", err)
 	}
 
-	pairRequested := false
 	for evt := range qrChan {
 		switch evt.Event {
 		case "code":
-			if *usePairCode {
-				if pairRequested {
-					continue
-				}
-				phone := wa.NormalizePhone(os.Getenv("WACLI_PHONE"))
-				if phone == "" {
-					die("WACLI_PHONE env var is required for pairing-code login")
-				}
-				code, err := service.Client().PairPhone(context.Background(), phone, false, whatsmeow.PairClientChrome, "Chrome (Linux)")
-				if err != nil {
-					die("pair phone: %v", err)
-				}
-				fmt.Printf("Pairing code: %s\n", code)
-				fmt.Println("Open WhatsApp on your phone -> Linked Devices -> Link with phone number.")
-				pairRequested = true
-				continue
-			}
 			showQRCode(evt.Code)
 		case "success":
 			fmt.Println("Login successful.")
@@ -583,12 +590,19 @@ func cmdDaemon() {
 	service := newServiceOrDie(store)
 	defer service.Close()
 
-	if err := service.Connect(); err != nil {
-		die("%v", err)
+	// An unpaired device still serves, because POST /login/pair is the one route that is only
+	// ever useful before there is a session — dying here would mean the daemon can never be the
+	// thing that links itself.
+	if service.IsPaired() {
+		if err := service.Connect(); err != nil {
+			die("%v", err)
+		}
+		// Guard the long-running connection: recover from a socket that dies
+		// silently while still reporting "connected" (messages stop arriving).
+		service.StartConnectionWatchdog()
+	} else {
+		fmt.Println("No WhatsApp session yet. POST /login/pair {\"phone\":\"+91...\"} to link one.")
 	}
-	// Guard the long-running connection: recover from a socket that dies
-	// silently while still reporting "connected" (messages stop arriving).
-	service.StartConnectionWatchdog()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
